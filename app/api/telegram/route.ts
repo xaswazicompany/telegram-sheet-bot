@@ -41,16 +41,26 @@ type RealTimeRow = {
   nightShift: string;
   midShift: string;
   total: string;
+  isTotal?: boolean;
 };
 
 type RealTimePreview = {
   timestamp: string;
   headers: [string, string, string, string, string];
   rows: RealTimeRow[];
-  hasNextPage: boolean;
-  page: number;
   rowOffset: number;
 };
+
+type MatrixSectionPreview = {
+  title: string;
+  subtitle: string;
+  rows: string[][];
+  headerRows: number;
+  width: number;
+  columnWidths?: number[];
+};
+
+const REAL_TIME_SECTION_COUNT = 5;
 
 type ShiftingSummaryItem = {
   label: string;
@@ -169,18 +179,38 @@ function buildDisplayRows(rows: string[][], rowOffset: number) {
   ];
 }
 
-async function getRealTimePreview(page: number, rowsPerPage: number): Promise<RealTimePreview> {
-  const safePage = Math.max(0, page);
-  const startRow = 3 + safePage * rowsPerPage;
-  const endRow = startRow + rowsPerPage;
+function isMatrixRowEmpty(row: string[]) {
+  return row.every((cell) => cleanCell(cell ?? "").length === 0);
+}
 
-  const [headerRows, dataRows] = await Promise.all([
-    readSheetRange("REAL TIME", "A1:E2"),
-    readSheetRange("REAL TIME", `A${startRow}:E${endRow}`),
-  ]);
+function trimMatrixRows(rows: string[][]) {
+  const cleaned = rows.map((row) => row.map((cell) => cleanCell(cell ?? "")));
+  const nonEmptyRows = cleaned.filter((row) => !isMatrixRowEmpty(row));
 
-  const timestamp = cleanCell(headerRows[0]?.[0] ?? "REAL TIME");
-  const rawHeaders = headerRows[1] ?? ["PLATFORM", "DAY SHIFT", "NIGHT SHIFT", "MID SHIFT", "TOTAL"];
+  if (nonEmptyRows.length === 0) {
+    return [["No data available"]];
+  }
+
+  let maxColumnIndex = 0;
+
+  for (const row of nonEmptyRows) {
+    for (let index = row.length - 1; index >= 0; index -= 1) {
+      if (row[index]) {
+        maxColumnIndex = Math.max(maxColumnIndex, index);
+        break;
+      }
+    }
+  }
+
+  return nonEmptyRows.map((row) =>
+    Array.from({ length: maxColumnIndex + 1 }, (_, index) => row[index] ?? ""),
+  );
+}
+
+async function getRealTimeSummaryPreview(): Promise<RealTimePreview> {
+  const rows = await readSheetRange("REAL TIME", "A1:E26");
+  const timestamp = cleanCell(rows[0]?.[0] ?? "REAL TIME");
+  const rawHeaders = rows[1] ?? ["PLATFORM", "DAY SHIFT", "NIGHT SHIFT", "MID SHIFT", "TOTAL"];
   const headers = [
     normalizeHeader(rawHeaders[0] ?? "PLATFORM"),
     rawHeaders[1] ?? "DAY SHIFT",
@@ -189,7 +219,8 @@ async function getRealTimePreview(page: number, rowsPerPage: number): Promise<Re
     rawHeaders[4] ?? "TOTAL",
   ] as [string, string, string, string, string];
 
-  const rows = dataRows
+  const dataRows = rows
+    .slice(2)
     .filter((row) => cleanCell(row[0] ?? "").length > 0)
     .map((row) => ({
       platform: cleanCell(row[0] ?? "-"),
@@ -197,16 +228,66 @@ async function getRealTimePreview(page: number, rowsPerPage: number): Promise<Re
       nightShift: cleanCell(row[2] ?? "-"),
       midShift: cleanCell(row[3] ?? "-"),
       total: cleanCell(row[4] ?? "-"),
+      isTotal: cleanCell(row[0] ?? "").toUpperCase() === "TOTAL",
     }));
 
   return {
     timestamp,
     headers,
-    rows: rows.slice(0, rowsPerPage),
-    hasNextPage: rows.length > rowsPerPage,
-    page: safePage,
-    rowOffset: startRow,
+    rows: dataRows,
+    rowOffset: 3,
   };
+}
+
+async function getRealTimeMatrixSection(sectionIndex: number): Promise<MatrixSectionPreview> {
+  switch (sectionIndex) {
+    case 1: {
+      const rows = trimMatrixRows(await readSheetRange("REAL TIME", "G1:V12"));
+      return {
+        title: "Daily Shift Codes",
+        subtitle: "Section 2 of 5",
+        rows,
+        headerRows: 2,
+        width: 2300,
+        columnWidths: [160, ...Array.from({ length: Math.max(rows[0]?.length ?? 1, 2) - 1 }, () => 135)],
+      };
+    }
+    case 2: {
+      const rows = trimMatrixRows(await readSheetRange("REAL TIME", "Y1:AC15"));
+      return {
+        title: "Team Leaders",
+        subtitle: "Section 3 of 5",
+        rows,
+        headerRows: 1,
+        width: 2400,
+        columnWidths: [520, 240, 260, 300, 1080],
+      };
+    }
+    case 3: {
+      const rows = trimMatrixRows(await readSheetRange("REAL TIME", "M35:Q50"));
+      return {
+        title: "Vietnam Staffs",
+        subtitle: "Section 4 of 5",
+        rows,
+        headerRows: 2,
+        width: 1500,
+        columnWidths: [460, 220, 220, 220, 220],
+      };
+    }
+    case 4: {
+      const rows = trimMatrixRows(await readSheetRange("REAL TIME", "A78:I120"));
+      return {
+        title: "Detailed Metrics",
+        subtitle: "Section 5 of 5",
+        rows,
+        headerRows: 2,
+        width: 2260,
+        columnWidths: [780, 175, 175, 175, 190, 190, 190, 210, 150],
+      };
+    }
+    default:
+      throw new Error(`Unsupported REAL TIME section: ${sectionIndex}`);
+  }
 }
 
 function createShiftingEntry(row: string[], startIndex: number): ShiftingEntry | null {
@@ -307,9 +388,16 @@ function buildSheetCaption(sheetTitle: string, rowOffset: number, rowCount: numb
   return `${sheetTitle}\nRows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
 }
 
-function buildRealTimeCaption(preview: RealTimePreview) {
-  const lastVisibleRow = preview.rows.length > 0 ? preview.rowOffset + preview.rows.length - 1 : preview.rowOffset;
-  return `REAL TIME\n${preview.timestamp}\nPlatforms ${preview.rowOffset - 2}-${lastVisibleRow - 2}`;
+function buildRealTimeSummaryCaption(preview: RealTimePreview) {
+  return `REAL TIME
+${preview.timestamp}
+Summary (1 of ${REAL_TIME_SECTION_COUNT})`;
+}
+
+function buildRealTimeSectionCaption(preview: MatrixSectionPreview) {
+  return `REAL TIME
+${preview.title}
+${preview.subtitle}`;
 }
 
 function buildShiftingCaption(preview: ShiftingPreview) {
@@ -578,14 +666,14 @@ async function renderGenericSheetImage(
 }
 
 async function renderRealTimeImage(preview: RealTimePreview) {
-  const width = 1200;
-  const height = Math.max(860, 300 + preview.rows.length * 72);
+  const width = 1900;
+  const height = Math.max(1500, 260 + preview.rows.length * 62);
   const columns = [
-    { key: "platform", label: preview.headers[0], width: 350 },
-    { key: "dayShift", label: preview.headers[1], width: 180 },
-    { key: "nightShift", label: preview.headers[2], width: 180 },
-    { key: "midShift", label: preview.headers[3], width: 180 },
-    { key: "total", label: preview.headers[4], width: 170 },
+    { key: "platform", label: preview.headers[0], width: 1100 },
+    { key: "dayShift", label: preview.headers[1], width: 200 },
+    { key: "nightShift", label: preview.headers[2], width: 200 },
+    { key: "midShift", label: preview.headers[3], width: 200 },
+    { key: "total", label: preview.headers[4], width: 200 },
   ] as const;
 
   const image = new ImageResponse(
@@ -597,9 +685,8 @@ async function renderRealTimeImage(preview: RealTimePreview) {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          background: "#f4f1ea",
+          background: "#ffffff",
           color: "#111827",
-          padding: "36px",
           fontFamily: "Georgia, serif",
           boxSizing: "border-box",
         },
@@ -611,14 +698,128 @@ async function renderRealTimeImage(preview: RealTimePreview) {
             key: "stamp",
             style: {
               display: "flex",
-              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
               background: "#3f725c",
               color: "#ffffff",
-              borderRadius: "20px 20px 0 0",
-              padding: "22px 28px",
-              border: "3px solid #244536",
-              borderBottom: "0",
+              padding: "18px 26px",
+              borderBottom: "3px solid #1f2937",
+              fontSize: "56px",
+              fontWeight: 700,
+            },
+          },
+          preview.timestamp,
+        ),
+        createElement(
+          "div",
+          {
+            key: "thead",
+            style: {
+              display: "flex",
+              background: "#3f725c",
+              color: "#ffffff",
+              borderBottom: "3px solid #1f2937",
+            },
+          },
+          columns.map((column) =>
+            createElement(
+              "div",
+              {
+                key: column.key,
+                style: {
+                  width: `${column.width}px`,
+                  padding: "14px 12px",
+                  borderRight: column.key === "total" ? "0" : "2px solid #1f2937",
+                  textAlign: "center",
+                  fontSize: "28px",
+                  fontWeight: 700,
+                },
+              },
+              column.label,
+            ),
+          ),
+        ),
+        ...preview.rows.map((row, index) =>
+          createElement(
+            "div",
+            {
+              key: `${row.platform}-${index}`,
+              style: {
+                display: "flex",
+                background: row.isTotal ? "#fff200" : index % 2 === 0 ? "#ffffff" : "#f8fafc",
+                borderBottom: "2px solid #1f2937",
+              },
+            },
+            columns.map((column) =>
+              createElement(
+                "div",
+                {
+                  key: `${row.platform}-${column.key}`,
+                  style: {
+                    width: `${column.width}px`,
+                    padding: "10px 12px",
+                    borderRight: column.key === "total" ? "0" : "2px solid #1f2937",
+                    textAlign: column.key === "platform" ? "left" : "center",
+                    fontSize: column.key === "platform" ? "30px" : "32px",
+                    fontWeight: 700,
+                  },
+                },
+                row[column.key],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+    {
+      width,
+      height,
+    },
+  );
+
+  return image.arrayBuffer();
+}
+
+async function renderMatrixSectionImage(preview: MatrixSectionPreview) {
+  const columnCount = Math.max(...preview.rows.map((row) => row.length), 1);
+  const suppliedWidths = preview.columnWidths ?? [];
+  const fallbackWidth = Math.floor(preview.width / columnCount);
+  const columnWidths = Array.from(
+    { length: columnCount },
+    (_, index) => suppliedWidths[index] ?? fallbackWidth,
+  );
+  const bodyRowCount = Math.max(preview.rows.length - preview.headerRows, 0);
+  const height = Math.max(950, 220 + preview.headerRows * 74 + bodyRowCount * 58);
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "#ffffff",
+          color: "#111827",
+          fontFamily: "Georgia, serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
               alignItems: "center",
+              justifyContent: "center",
+              background: "#3f725c",
+              color: "#ffffff",
+              padding: "20px 28px",
+              borderBottom: "3px solid #1f2937",
             },
           },
           [
@@ -627,131 +828,72 @@ async function renderRealTimeImage(preview: RealTimePreview) {
               {
                 key: "title",
                 style: {
-                  fontSize: "28px",
-                  letterSpacing: "2px",
-                  marginBottom: "8px",
-                  textTransform: "uppercase",
-                },
-              },
-              "REAL TIME",
-            ),
-            createElement(
-              "div",
-              {
-                key: "time",
-                style: {
-                  fontSize: "54px",
+                  fontSize: "48px",
                   fontWeight: 700,
                 },
               },
-              preview.timestamp,
+              preview.title,
             ),
-          ],
-        ),
-        createElement(
-          "div",
-          {
-            key: "table",
-            style: {
-              display: "flex",
-              flexDirection: "column",
-              border: "3px solid #244536",
-              borderTop: "0",
-            },
-          },
-          [
             createElement(
               "div",
               {
-                key: "thead",
+                key: "subtitle",
                 style: {
-                  display: "flex",
-                  background: "#3f725c",
-                  color: "#ffffff",
-                  borderBottom: "3px solid #244536",
+                  fontSize: "24px",
+                  marginTop: "8px",
                 },
               },
-              columns.map((column) =>
-                createElement(
-                  "div",
-                  {
-                    key: column.key,
-                    style: {
-                      width: `${column.width}px`,
-                      padding: "16px 14px",
-                      borderRight: column.key === "total" ? "0" : "2px solid #244536",
-                      textAlign: "center",
-                      fontSize: "24px",
-                      fontWeight: 700,
-                    },
-                  },
-                  column.label,
-                ),
-              ),
-            ),
-            ...preview.rows.map((row, index) =>
-              createElement(
-                "div",
-                {
-                  key: `${row.platform}-${index}`,
-                  style: {
-                    display: "flex",
-                    background: index % 2 === 0 ? "#ffffff" : "#f6f7f8",
-                    borderBottom:
-                      index === preview.rows.length - 1 ? "0" : "2px solid #1f2937",
-                  },
-                },
-                columns.map((column) =>
-                  createElement(
-                    "div",
-                    {
-                      key: `${row.platform}-${column.key}`,
-                      style: {
-                        width: `${column.width}px`,
-                        padding: "14px 12px",
-                        borderRight: column.key === "total" ? "0" : "2px solid #1f2937",
-                        textAlign: column.key === "platform" ? "left" : "center",
-                        fontSize: column.key === "platform" ? "24px" : "28px",
-                        fontWeight: column.key === "platform" ? 700 : 600,
-                      },
-                    },
-                    row[column.key],
-                  ),
-                ),
-              ),
+              preview.subtitle,
             ),
           ],
         ),
-        createElement(
-          "div",
-          {
-            key: "footer",
-            style: {
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginTop: "18px",
-              color: "#334155",
-              fontSize: "22px",
+        ...preview.rows.map((row, rowIndex) =>
+          createElement(
+            "div",
+            {
+              key: `row-${rowIndex}`,
+              style: {
+                display: "flex",
+                background:
+                  rowIndex < preview.headerRows
+                    ? "#3f725c"
+                    : rowIndex % 2 === 0
+                      ? "#ffffff"
+                      : "#f8fafc",
+                color: rowIndex < preview.headerRows ? "#ffffff" : "#111827",
+                borderBottom: "2px solid #1f2937",
+              },
             },
-          },
-          [
-            createElement(
-              "div",
-              { key: "range" },
-              `Platforms ${preview.rowOffset - 2}-${preview.rowOffset - 2 + Math.max(preview.rows.length - 1, 0)}`,
+            Array.from({ length: columnCount }, (_, columnIndex) =>
+              createElement(
+                "div",
+                {
+                  key: `cell-${rowIndex}-${columnIndex}`,
+                  style: {
+                    width: `${columnWidths[columnIndex]}px`,
+                    padding: rowIndex < preview.headerRows ? "12px 10px" : "10px 10px",
+                    borderRight: columnIndex === columnCount - 1 ? "0" : "2px solid #1f2937",
+                    textAlign: columnIndex === 0 ? "left" : "center",
+                    fontSize: rowIndex < preview.headerRows ? "26px" : "24px",
+                    fontWeight: rowIndex < preview.headerRows ? 700 : 600,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    lineHeight: 1.15,
+                    minHeight: rowIndex < preview.headerRows ? "60px" : "52px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: columnIndex === 0 ? "flex-start" : "center",
+                  },
+                },
+                row[columnIndex] ?? "",
+              ),
             ),
-            createElement(
-              "div",
-              { key: "page" },
-              `Page ${preview.page + 1}`,
-            ),
-          ],
+          ),
         ),
       ],
     ),
     {
-      width,
+      width: preview.width,
       height,
     },
   );
@@ -1138,10 +1280,19 @@ async function showSheet(
   let replyMarkup: SheetNavigation;
 
   if (sheet.title === "REAL TIME") {
-    const preview = await getRealTimePreview(page, getPreviewRows());
-    imageBuffer = await renderRealTimeImage(preview);
-    caption = buildRealTimeCaption(preview);
-    replyMarkup = buildSheetNavigation(sheetIndex, page, preview.hasNextPage);
+    const safePage = Math.max(0, Math.min(page, REAL_TIME_SECTION_COUNT - 1));
+
+    if (safePage === 0) {
+      const preview = await getRealTimeSummaryPreview();
+      imageBuffer = await renderRealTimeImage(preview);
+      caption = buildRealTimeSummaryCaption(preview);
+    } else {
+      const preview = await getRealTimeMatrixSection(safePage);
+      imageBuffer = await renderMatrixSectionImage(preview);
+      caption = buildRealTimeSectionCaption(preview);
+    }
+
+    replyMarkup = buildSectionNavigation(sheetIndex, safePage, REAL_TIME_SECTION_COUNT);
   } else if (sheet.title === "SHIFTING") {
     const preview = await getShiftingPreview(page);
     imageBuffer = await renderShiftingImage(preview);
