@@ -655,7 +655,7 @@ function buildShiftingCaption(preview: ShiftingPreview) {
   const pageLabel = preview.totalEntryPages > 1 ? `
 Showing ${visibleCount} of ${preview.entries.length} · Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "";
 
-  return `🔄 SHIFTING
+  return `🔄 SHIFTING COMMAND BOARD
 ${preview.currentSection.title}
 ${shiftLabel} · ${preview.entries.length} team member${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
 }
@@ -719,7 +719,7 @@ function buildSheetNavigation(sheetIndex: number, page: number, totalPages: numb
     inlineKeyboard.push(jumpButtons);
   }
 
-  inlineKeyboard.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
+  inlineKeyboard.push([{ text: "🏠 Main Dashboard", callback_data: "menu:0" }]);
 
   return { inline_keyboard: inlineKeyboard };
 }
@@ -746,7 +746,7 @@ function buildSectionNavigation(sheetIndex: number, page: number, totalSections:
     inlineKeyboard.push(navigationButtons);
   }
 
-  inlineKeyboard.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
+  inlineKeyboard.push([{ text: "🏠 Main Dashboard", callback_data: "menu:0" }]);
 
   return { inline_keyboard: inlineKeyboard };
 }
@@ -757,13 +757,13 @@ function buildShiftingPlatformKeyboard(sheetIndex: number, sections: ShiftingSec
   for (let index = 0; index < sections.length; index += 2) {
     rows.push(
       sections.slice(index, index + 2).map((section, offset) => ({
-        text: shortenCell(section.title, 24),
+        text: `🏷️ ${shortenCell(section.title, 18)}`,
         callback_data: `shiftplatform:${sheetIndex}:${index + offset}`,
       })),
     );
   }
 
-  rows.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
+  rows.push([{ text: "🏠 Return To Dashboard", callback_data: "menu:0" }]);
 
   return { inline_keyboard: rows };
 }
@@ -782,14 +782,14 @@ function buildShiftingShiftKeyboard(
 
   if (platformIndex > 0) {
     platformNav.push({
-      text: "⬅️ Prev Platform",
+      text: "◀ Previous",
       callback_data: `shiftview:${sheetIndex}:${platformIndex - 1}:${shiftKind}:0`,
     });
   }
 
   if (platformIndex + 1 < totalPlatforms) {
     platformNav.push({
-      text: "Next Platform ➡️",
+      text: "Next ▶",
       callback_data: `shiftview:${sheetIndex}:${platformIndex + 1}:${shiftKind}:0`,
     });
   }
@@ -803,14 +803,14 @@ function buildShiftingShiftKeyboard(
 
     if (entryPage > 0) {
       pageNav.push({
-        text: "⬅️ Prev Members",
+        text: "◀ Previous Page",
         callback_data: `shiftview:${sheetIndex}:${platformIndex}:${shiftKind}:${entryPage - 1}`,
       });
     }
 
     if (entryPage + 1 < totalEntryPages) {
       pageNav.push({
-        text: "Next Members ➡️",
+        text: "Next Page ▶",
         callback_data: `shiftview:${sheetIndex}:${platformIndex}:${shiftKind}:${entryPage + 1}`,
       });
     }
@@ -836,7 +836,7 @@ function buildShiftingShiftKeyboard(
   ]);
 
   rows.push([
-    { text: "🏢 Platforms", callback_data: `shiftplatforms:${sheetIndex}` },
+    { text: "🗂 Platform List", callback_data: `shiftplatforms:${sheetIndex}` },
     { text: "🏠 Dashboard", callback_data: "menu:0" },
   ]);
 
@@ -872,9 +872,9 @@ async function showShiftingPlatformMenu(
     await sendTelegramPhoto(
       message.chat.id,
       imageBuffer,
-      `🔄 SHIFTING OVERVIEW
-All platforms summary
-${sections.length} platform${sections.length === 1 ? "" : "s"} available`,
+      `🔄 SHIFTING COMMAND CENTER
+All platforms overview
+${sections.length} platform${sections.length === 1 ? "" : "s"} ready`,
       buildShiftingPlatformKeyboard(sheetIndex, sections),
     );
   } finally {
@@ -1078,7 +1078,7 @@ async function buildSheetKeyboard() {
 
   return {
     inline_keyboard: sheets.map((sheet, index) => [{
-      text: sheet.title === "REAL TIME" ? "📊 REAL TIME BOARD" : "🔄 SHIFTING BOARD",
+      text: sheet.title === "REAL TIME" ? "📊 REAL TIME COMMAND BOARD" : "🔄 SHIFTING COMMAND BOARD",
       callback_data: `sheet:${index}:0`,
     }]),
   };
@@ -2354,7 +2354,7 @@ async function sendMenu(chatId: number, text?: string) {
     imageBuffer,
     text ?? "WITHDRAW TEAM
 Live Operations Center
-Choose one board to open.",
+Open a command board to continue.",
     replyMarkup,
   );
 }
@@ -2551,7 +2551,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
       "WITHDRAW TEAM Dashboard
 Live Operations Center
 
-Choose one board to open.",
+Open a command board to continue.",
     );
     return;
   }
