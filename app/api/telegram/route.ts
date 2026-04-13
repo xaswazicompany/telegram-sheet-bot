@@ -618,9 +618,8 @@ async function getShiftingPreview(
   };
 }
 
-function buildSheetCaption(sheetTitle: string, rowOffset: number, rowCount: number, rows: string[][]) {
-  const lastVisibleRow = rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset;
-  return `${getSheetBadge(sheetTitle)} ${sheetTitle}\nRows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
+function buildSheetCaption(sheetTitle: string, _rowOffset: number, _rowCount: number, _rows: string[][]) {
+  return `${getSheetBadge(sheetTitle)} ${sheetTitle}`;
 }
 
 function buildBasicsCaption() {
@@ -659,7 +658,71 @@ ${preview.currentSection.title}
 ${shiftLabel} • ${preview.entries.length} member${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
 }
 
-function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boolean): SheetNavigation {
+function buildSheetNavigation(sheetIndex: number, page: number, totalPages: number, rowLabel?: string): SheetNavigation {
+  const inlineKeyboard: InlineKeyboardButton[][] = [];
+  const navigationButtons: InlineKeyboardButton[] = [];
+  const safeTotalPages = Math.max(1, totalPages);
+  const lastPage = safeTotalPages - 1;
+
+  if (page > 0) {
+    navigationButtons.push({
+      text: "⏮️ First",
+      callback_data: `sheet:${sheetIndex}:0`,
+    });
+    navigationButtons.push({
+      text: "⬅️ Previous",
+      callback_data: `sheet:${sheetIndex}:${page - 1}`,
+    });
+  }
+
+  if (page < lastPage) {
+    navigationButtons.push({
+      text: "Next ➡️",
+      callback_data: `sheet:${sheetIndex}:${page + 1}`,
+    });
+    navigationButtons.push({
+      text: "Last ⏭️",
+      callback_data: `sheet:${sheetIndex}:${lastPage}`,
+    });
+  }
+
+  if (navigationButtons.length > 0) {
+    inlineKeyboard.push(navigationButtons);
+  }
+
+  const jumpButtons: InlineKeyboardButton[] = [];
+
+  if (page >= 10) {
+    jumpButtons.push({
+      text: "⏪ -10",
+      callback_data: `sheet:${sheetIndex}:${Math.max(0, page - 10)}`,
+    });
+  }
+
+  if (rowLabel) {
+    jumpButtons.push({
+      text: `🔢 ${rowLabel}`,
+      callback_data: "noop:0",
+    });
+  }
+
+  if (page + 10 < safeTotalPages) {
+    jumpButtons.push({
+      text: "+10 ⏩",
+      callback_data: `sheet:${sheetIndex}:${Math.min(lastPage, page + 10)}`,
+    });
+  }
+
+  if (jumpButtons.length > 0) {
+    inlineKeyboard.push(jumpButtons);
+  }
+
+  inlineKeyboard.push([{ text: "📚 All sheets", callback_data: "menu:0" }]);
+
+  return { inline_keyboard: inlineKeyboard };
+}
+
+function buildSectionNavigation(sheetIndex: number, page: number, totalSections: number): SheetNavigation {
   const inlineKeyboard: InlineKeyboardButton[][] = [];
   const navigationButtons: InlineKeyboardButton[] = [];
 
@@ -670,7 +733,7 @@ function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boo
     });
   }
 
-  if (hasNextPage) {
+  if (page + 1 < totalSections) {
     navigationButtons.push({
       text: "Next ➡️",
       callback_data: `sheet:${sheetIndex}:${page + 1}`,
@@ -684,10 +747,6 @@ function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boo
   inlineKeyboard.push([{ text: "📚 All sheets", callback_data: "menu:0" }]);
 
   return { inline_keyboard: inlineKeyboard };
-}
-
-function buildSectionNavigation(sheetIndex: number, page: number, totalSections: number): SheetNavigation {
-  return buildSheetNavigation(sheetIndex, page, page + 1 < totalSections);
 }
 
 function buildShiftingPlatformKeyboard(sheetIndex: number, sections: ShiftingSection[]): SheetNavigation {
@@ -2174,7 +2233,14 @@ async function showSheet(
         `${sheet.title} image render`,
       );
       caption = buildSheetCaption(sheet.title, window.rowOffset, sheet.rowCount, window.rows);
-      replyMarkup = buildSheetNavigation(sheetIndex, page, window.hasNextPage);
+      const lastVisibleRow = window.rows.length > 0 ? window.rowOffset + window.rows.length - 1 : window.rowOffset;
+      const totalPages = Math.max(1, Math.ceil(sheet.rowCount / config.rowsPerPage));
+      replyMarkup = buildSheetNavigation(
+        sheetIndex,
+        page,
+        totalPages,
+        `Rows ${window.rowOffset}-${lastVisibleRow}`,
+      );
     }
 
     if (message.photo && message.photo.length > 0) {
@@ -2257,6 +2323,11 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
   }
 
   const data = callbackQuery.data ?? "";
+
+  if (data.startsWith("noop:")) {
+    await answerCallbackQuery(callbackQuery.id);
+    return;
+  }
 
   if (data.startsWith("menu:")) {
     await answerCallbackQuery(callbackQuery.id);
