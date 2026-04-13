@@ -52,6 +52,38 @@ type RealTimePreview = {
   rowOffset: number;
 };
 
+type ShiftingSummaryItem = {
+  label: string;
+  value: string;
+};
+
+type ShiftingEntry = {
+  shift: string;
+  platform: string;
+  role: string;
+  name: string;
+  id: string;
+  startDate: string;
+  account: string;
+};
+
+type ShiftingSection = {
+  title: string;
+  dayEntries: ShiftingEntry[];
+  nightEntries: ShiftingEntry[];
+};
+
+type ShiftingPreview = {
+  summary: ShiftingSummaryItem[];
+  sections: ShiftingSection[];
+  page: number;
+  currentSection: ShiftingSection;
+};
+
+type SheetNavigation = {
+  inline_keyboard: InlineKeyboardButton[][];
+};
+
 function getTelegramBotToken() {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 
@@ -105,6 +137,14 @@ function shortenCell(value: string, maxLength = 18) {
   return `${value.slice(0, maxLength - 1)}...`;
 }
 
+function normalizeHeader(value: string) {
+  if (value.toUpperCase() === "PLATFROM") {
+    return "PLATFORM";
+  }
+
+  return value;
+}
+
 function buildDisplayRows(rows: string[][], rowOffset: number) {
   const visibleRows = rows
     .map((row, index) => ({
@@ -129,14 +169,6 @@ function buildDisplayRows(rows: string[][], rowOffset: number) {
   ];
 }
 
-function normalizeRealTimeHeader(value: string) {
-  if (value.toUpperCase() === "PLATFROM") {
-    return "PLATFORM";
-  }
-
-  return value;
-}
-
 async function getRealTimePreview(page: number, rowsPerPage: number): Promise<RealTimePreview> {
   const safePage = Math.max(0, page);
   const startRow = 3 + safePage * rowsPerPage;
@@ -150,7 +182,7 @@ async function getRealTimePreview(page: number, rowsPerPage: number): Promise<Re
   const timestamp = cleanCell(headerRows[0]?.[0] ?? "REAL TIME");
   const rawHeaders = headerRows[1] ?? ["PLATFORM", "DAY SHIFT", "NIGHT SHIFT", "MID SHIFT", "TOTAL"];
   const headers = [
-    normalizeRealTimeHeader(rawHeaders[0] ?? "PLATFORM"),
+    normalizeHeader(rawHeaders[0] ?? "PLATFORM"),
     rawHeaders[1] ?? "DAY SHIFT",
     rawHeaders[2] ?? "NIGHT SHIFT",
     rawHeaders[3] ?? "MID SHIFT",
@@ -177,6 +209,99 @@ async function getRealTimePreview(page: number, rowsPerPage: number): Promise<Re
   };
 }
 
+function createShiftingEntry(row: string[], startIndex: number): ShiftingEntry | null {
+  const shift = cleanCell(row[startIndex] ?? "");
+  const platform = cleanCell(row[startIndex + 1] ?? "");
+  const role = cleanCell(row[startIndex + 2] ?? "");
+  const name = cleanCell(row[startIndex + 3] ?? "");
+  const id = cleanCell(row[startIndex + 4] ?? "");
+  const startDate = cleanCell(row[startIndex + 5] ?? "");
+  const account = cleanCell(row[startIndex + 6] ?? "");
+
+  if (!shift && !platform && !role && !name) {
+    return null;
+  }
+
+  return {
+    shift,
+    platform,
+    role,
+    name,
+    id,
+    startDate,
+    account,
+  };
+}
+
+function isShiftingSectionHeader(row: string[]) {
+  const e = cleanCell(row[4] ?? "");
+  const f = cleanCell(row[5] ?? "");
+  const g = cleanCell(row[6] ?? "");
+  const h = cleanCell(row[7] ?? "");
+
+  return Boolean(e) && !f && !g && !h;
+}
+
+async function getShiftingPreview(page: number): Promise<ShiftingPreview> {
+  const rows = await readSheetRange("SHIFTING", "A1:R220");
+  const summaryRows = rows.slice(1, 10);
+  const summary = summaryRows
+    .map((row) => ({
+      label: cleanCell(row[0] ?? ""),
+      value: cleanCell(row[1] ?? ""),
+    }))
+    .filter((item) => item.label && item.value);
+
+  const sections: ShiftingSection[] = [];
+  let currentSection: ShiftingSection | null = null;
+
+  for (const row of rows.slice(1)) {
+    if (isShiftingSectionHeader(row)) {
+      const title = cleanCell(row[4] ?? "");
+
+      if (title) {
+        currentSection = {
+          title,
+          dayEntries: [],
+          nightEntries: [],
+        };
+        sections.push(currentSection);
+      }
+
+      continue;
+    }
+
+    if (!currentSection) {
+      continue;
+    }
+
+    const dayEntry = createShiftingEntry(row, 4);
+    const nightEntry = createShiftingEntry(row, 11);
+
+    if (dayEntry && dayEntry.name) {
+      currentSection.dayEntries.push(dayEntry);
+    }
+
+    if (nightEntry && nightEntry.name) {
+      currentSection.nightEntries.push(nightEntry);
+    }
+  }
+
+  const safePage = Math.max(0, Math.min(page, Math.max(sections.length - 1, 0)));
+  const fallbackSection: ShiftingSection = {
+    title: "SHIFTING",
+    dayEntries: [],
+    nightEntries: [],
+  };
+
+  return {
+    summary,
+    sections,
+    page: safePage,
+    currentSection: sections[safePage] ?? fallbackSection,
+  };
+}
+
 function buildSheetCaption(sheetTitle: string, rowOffset: number, rowCount: number, rows: string[][]) {
   const lastVisibleRow = rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset;
   return `${sheetTitle}\nRows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
@@ -187,7 +312,11 @@ function buildRealTimeCaption(preview: RealTimePreview) {
   return `REAL TIME\n${preview.timestamp}\nPlatforms ${preview.rowOffset - 2}-${lastVisibleRow - 2}`;
 }
 
-function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boolean) {
+function buildShiftingCaption(preview: ShiftingPreview) {
+  return `SHIFTING\n${preview.currentSection.title}\nSection ${preview.page + 1} of ${Math.max(preview.sections.length, 1)}`;
+}
+
+function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boolean): SheetNavigation {
   const inlineKeyboard: InlineKeyboardButton[][] = [];
   const navigationButtons: InlineKeyboardButton[] = [];
 
@@ -214,6 +343,10 @@ function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boo
   return { inline_keyboard: inlineKeyboard };
 }
 
+function buildSectionNavigation(sheetIndex: number, page: number, totalSections: number): SheetNavigation {
+  return buildSheetNavigation(sheetIndex, page, page + 1 < totalSections);
+}
+
 async function callTelegram(method: string, payload: Record<string, unknown>) {
   const token = getTelegramBotToken();
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -234,7 +367,7 @@ async function sendTelegramPhoto(
   chatId: number,
   imageBuffer: ArrayBuffer,
   caption: string,
-  replyMarkup: { inline_keyboard: InlineKeyboardButton[][] },
+  replyMarkup: SheetNavigation,
 ) {
   const token = getTelegramBotToken();
   const formData = new FormData();
@@ -626,6 +759,348 @@ async function renderRealTimeImage(preview: RealTimePreview) {
   return image.arrayBuffer();
 }
 
+function renderShiftingEntryCard(entry: ShiftingEntry, accent: string) {
+  return createElement(
+    "div",
+    {
+      key: `${entry.name}-${entry.id}-${entry.shift}`,
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        padding: "14px 16px",
+        borderRadius: "18px",
+        background: "rgba(255,255,255,0.92)",
+        border: `2px solid ${accent}`,
+        marginBottom: "12px",
+      },
+    },
+    [
+      createElement(
+        "div",
+        {
+          key: "top",
+          style: {
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "12px",
+            fontSize: "18px",
+          },
+        },
+        [
+          createElement(
+            "div",
+            {
+              key: "shift",
+              style: {
+                color: accent,
+                fontWeight: 700,
+              },
+            },
+            entry.shift || "Shift",
+          ),
+          createElement(
+            "div",
+            {
+              key: "role",
+              style: {
+                color: "#475569",
+              },
+            },
+            entry.role || "Role",
+          ),
+        ],
+      ),
+      createElement(
+        "div",
+        {
+          key: "name",
+          style: {
+            fontSize: "24px",
+            fontWeight: 700,
+            color: "#0f172a",
+          },
+        },
+        shortenCell(entry.name, 36),
+      ),
+      createElement(
+        "div",
+        {
+          key: "meta",
+          style: {
+            fontSize: "18px",
+            color: "#334155",
+          },
+        },
+        `${entry.platform || "Platform"} | ${entry.id || "No ID"}`,
+      ),
+      createElement(
+        "div",
+        {
+          key: "account",
+          style: {
+            fontSize: "16px",
+            color: "#64748b",
+          },
+        },
+        shortenCell(entry.account || entry.startDate || "", 44),
+      ),
+    ],
+  );
+}
+
+async function renderShiftingImage(preview: ShiftingPreview) {
+  const width = 1280;
+  const maxEntries = Math.max(preview.currentSection.dayEntries.length, preview.currentSection.nightEntries.length, 1);
+  const summaryRows = Math.ceil(Math.max(preview.summary.length, 1) / 4);
+  const height = Math.max(900, 300 + summaryRows * 110 + maxEntries * 132);
+  const summaryAccent = ["#1d4ed8", "#0f766e", "#9333ea", "#c2410c"];
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #eef6f4 0%, #e2ecf6 100%)",
+          color: "#0f172a",
+          padding: "34px",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              background: "#1f4f46",
+              color: "#ffffff",
+              borderRadius: "24px",
+              padding: "24px 28px",
+              marginBottom: "20px",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "22px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  color: "#c7f9cc",
+                },
+              },
+              "Shifting Overview",
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "46px",
+                  fontWeight: 800,
+                  marginTop: "8px",
+                },
+              },
+              preview.currentSection.title,
+            ),
+            createElement(
+              "div",
+              {
+                key: "page",
+                style: {
+                  fontSize: "22px",
+                  color: "#dbeafe",
+                  marginTop: "8px",
+                },
+              },
+              `Section ${preview.page + 1} of ${Math.max(preview.sections.length, 1)}`,
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "summary",
+            style: {
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "14px",
+              marginBottom: "20px",
+            },
+          },
+          preview.summary.map((item, index) =>
+            createElement(
+              "div",
+              {
+                key: item.label,
+                style: {
+                  width: "290px",
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: "16px 18px",
+                  borderRadius: "18px",
+                  background: "#ffffff",
+                  borderTop: `6px solid ${summaryAccent[index % summaryAccent.length]}`,
+                  boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "18px",
+                      color: "#475569",
+                    },
+                  },
+                  item.label,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: "38px",
+                      fontWeight: 800,
+                      color: "#0f172a",
+                      marginTop: "8px",
+                    },
+                  },
+                  item.value,
+                ),
+              ],
+            ),
+          ),
+        ),
+        createElement(
+          "div",
+          {
+            key: "columns",
+            style: {
+              display: "flex",
+              gap: "18px",
+              flex: 1,
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "day",
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  flex: 1,
+                  background: "rgba(255,255,255,0.72)",
+                  borderRadius: "24px",
+                  padding: "18px",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "title",
+                    style: {
+                      fontSize: "28px",
+                      fontWeight: 800,
+                      color: "#0f766e",
+                      marginBottom: "12px",
+                    },
+                  },
+                  `Day / Mid (${preview.currentSection.dayEntries.length})`,
+                ),
+                ...(preview.currentSection.dayEntries.length > 0
+                  ? preview.currentSection.dayEntries.map((entry) =>
+                      renderShiftingEntryCard(entry, "#0f766e"),
+                    )
+                  : [
+                      createElement(
+                        "div",
+                        {
+                          key: "empty-day",
+                          style: {
+                            fontSize: "22px",
+                            color: "#64748b",
+                            padding: "18px 8px",
+                          },
+                        },
+                        "No day entries in this section.",
+                      ),
+                    ]),
+              ],
+            ),
+            createElement(
+              "div",
+              {
+                key: "night",
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  flex: 1,
+                  background: "rgba(255,255,255,0.72)",
+                  borderRadius: "24px",
+                  padding: "18px",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "title",
+                    style: {
+                      fontSize: "28px",
+                      fontWeight: 800,
+                      color: "#1d4ed8",
+                      marginBottom: "12px",
+                    },
+                  },
+                  `Night (${preview.currentSection.nightEntries.length})`,
+                ),
+                ...(preview.currentSection.nightEntries.length > 0
+                  ? preview.currentSection.nightEntries.map((entry) =>
+                      renderShiftingEntryCard(entry, "#1d4ed8"),
+                    )
+                  : [
+                      createElement(
+                        "div",
+                        {
+                          key: "empty-night",
+                          style: {
+                            fontSize: "22px",
+                            color: "#64748b",
+                            padding: "18px 8px",
+                          },
+                        },
+                        "No night entries in this section.",
+                      ),
+                    ]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    ),
+    {
+      width,
+      height,
+    },
+  );
+
+  return image.arrayBuffer();
+}
+
 async function sendMenu(chatId: number, text?: string) {
   const replyMarkup = await buildSheetKeyboard();
 
@@ -660,13 +1135,18 @@ async function showSheet(
 
   let imageBuffer: ArrayBuffer;
   let caption: string;
-  let replyMarkup: { inline_keyboard: InlineKeyboardButton[][] };
+  let replyMarkup: SheetNavigation;
 
   if (sheet.title === "REAL TIME") {
     const preview = await getRealTimePreview(page, getPreviewRows());
     imageBuffer = await renderRealTimeImage(preview);
     caption = buildRealTimeCaption(preview);
     replyMarkup = buildSheetNavigation(sheetIndex, page, preview.hasNextPage);
+  } else if (sheet.title === "SHIFTING") {
+    const preview = await getShiftingPreview(page);
+    imageBuffer = await renderShiftingImage(preview);
+    caption = buildShiftingCaption(preview);
+    replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
   } else {
     const rowsPerPage = getPreviewRows();
     const columnsToShow = getPreviewColumns();
