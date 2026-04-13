@@ -82,10 +82,11 @@ type ShiftingEntry = {
 type ShiftingSection = {
   title: string;
   dayEntries: ShiftingEntry[];
+  midEntries: ShiftingEntry[];
   nightEntries: ShiftingEntry[];
 };
 
-type ShiftingShiftKind = "day" | "night";
+type ShiftingShiftKind = "day" | "mid" | "night";
 
 type ShiftingPreview = {
   summary: ShiftingSummaryItem[];
@@ -512,6 +513,7 @@ async function getShiftingData() {
         currentSection = {
           title,
           dayEntries: [],
+          midEntries: [],
           nightEntries: [],
         };
         sections.push(currentSection);
@@ -528,11 +530,27 @@ async function getShiftingData() {
     const nightEntry = createShiftingEntry(row, 11);
 
     if (dayEntry && dayEntry.name) {
-      currentSection.dayEntries.push(dayEntry);
+      const normalizedShift = dayEntry.shift.toLowerCase();
+
+      if (normalizedShift.includes("中班") || normalizedShift.includes("mid")) {
+        currentSection.midEntries.push(dayEntry);
+      } else if (normalizedShift.includes("夜班") || normalizedShift.includes("night")) {
+        currentSection.nightEntries.push(dayEntry);
+      } else {
+        currentSection.dayEntries.push(dayEntry);
+      }
     }
 
     if (nightEntry && nightEntry.name) {
-      currentSection.nightEntries.push(nightEntry);
+      const normalizedShift = nightEntry.shift.toLowerCase();
+
+      if (normalizedShift.includes("中班") || normalizedShift.includes("mid")) {
+        currentSection.midEntries.push(nightEntry);
+      } else if (normalizedShift.includes("白班") || normalizedShift.includes("day")) {
+        currentSection.dayEntries.push(nightEntry);
+      } else {
+        currentSection.nightEntries.push(nightEntry);
+      }
     }
   }
 
@@ -552,10 +570,16 @@ async function getShiftingPreview(
   const fallbackSection: ShiftingSection = {
     title: "SHIFTING",
     dayEntries: [],
+    midEntries: [],
     nightEntries: [],
   };
   const currentSection = sections[safePlatformIndex] ?? fallbackSection;
-  const entries = shiftKind === "night" ? currentSection.nightEntries : currentSection.dayEntries;
+  const entries =
+    shiftKind === "night"
+      ? currentSection.nightEntries
+      : shiftKind === "mid"
+        ? currentSection.midEntries
+        : currentSection.dayEntries;
   const entriesPerPage = 4;
   const totalEntryPages = Math.max(1, Math.ceil(entries.length / entriesPerPage));
   const safeEntryPage = Math.max(0, Math.min(entryPage, totalEntryPages - 1));
@@ -604,7 +628,12 @@ ${preview.subtitle}`;
 }
 
 function buildShiftingCaption(preview: ShiftingPreview) {
-  const shiftLabel = preview.shiftKind === "night" ? "🌙 Night" : "🌤️ Day";
+  const shiftLabel =
+    preview.shiftKind === "night"
+      ? "🌙 Night"
+      : preview.shiftKind === "mid"
+        ? "🌇 Mid"
+        : "🌤️ Day";
   const pageLabel = preview.totalEntryPages > 1 ? `
 Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "";
 
@@ -719,6 +748,10 @@ function buildShiftingShiftKeyboard(
       callback_data: `shiftview:${sheetIndex}:${platformIndex}:day:0`,
     },
     {
+      text: `🌇 Mid (${section.midEntries.length})`,
+      callback_data: `shiftview:${sheetIndex}:${platformIndex}:mid:0`,
+    },
+    {
       text: `🌙 Night (${section.nightEntries.length})`,
       callback_data: `shiftview:${sheetIndex}:${platformIndex}:night:0`,
     },
@@ -801,12 +834,12 @@ async function showShiftingShiftMenu(
     message.chat.id,
     `🔄 SHIFTING
 ${currentSection.title}
-Choose Day or Night.`,
+Choose Day, Mid, or Night.`,
     buildShiftingShiftKeyboard(
       sheetIndex,
       safePlatformIndex,
       currentSection,
-      "day",
+      currentSection.dayEntries.length > 0 ? "day" : currentSection.midEntries.length > 0 ? "mid" : "night",
       sections.length,
       0,
       1,
@@ -832,7 +865,7 @@ async function showShiftingView(
   await answerCallbackQuery(callbackQuery.id, "Loading...");
   const loadingMessageId = await sendStatusMessage(
     message.chat.id,
-    `⏳ Loading ${preview.currentSection.title} ${shiftKind} shift...`,
+    `⏳ Loading ${preview.currentSection.title} ${shiftKind === "mid" ? "mid" : shiftKind} shift...`,
   );
 
   try {
@@ -1900,9 +1933,9 @@ async function renderShiftingOverviewImage(
 
 async function renderShiftingImage(preview: ShiftingPreview) {
   const width = 1400;
-  const shiftAccent = preview.shiftKind === "night" ? "#1d4ed8" : "#0f766e";
-  const shiftLabel = preview.shiftKind === "night" ? "Night Shift" : "Day Shift";
-  const shiftBadge = preview.shiftKind === "night" ? "🌙" : "🌤️";
+  const shiftAccent = preview.shiftKind === "night" ? "#1d4ed8" : preview.shiftKind === "mid" ? "#7c3aed" : "#0f766e";
+  const shiftLabel = preview.shiftKind === "night" ? "Night Shift" : preview.shiftKind === "mid" ? "Mid Shift" : "Day Shift";
+  const shiftBadge = preview.shiftKind === "night" ? "🌙" : preview.shiftKind === "mid" ? "🌇" : "🌤️";
   const pageLabel = preview.totalEntryPages > 1 ? `Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "Single page";
   const entryCount = Math.max(preview.pagedEntries.length, 1);
   const height = Math.max(980, 280 + entryCount * 156);
@@ -2012,7 +2045,7 @@ async function renderShiftingImage(preview: ShiftingPreview) {
                         padding: "18px 8px",
                       },
                     },
-                    `No ${preview.shiftKind === "night" ? "night" : "day"} entries in this platform.`,
+                    `No ${preview.shiftKind === "night" ? "night" : preview.shiftKind === "mid" ? "mid" : "day"} entries in this platform.`,
                   ),
                 ]),
           ],
@@ -2242,7 +2275,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
       Number.isNaN(sheetIndex) ||
       Number.isNaN(platformIndex) ||
       Number.isNaN(entryPage) ||
-      (shiftKindValue !== "day" && shiftKindValue !== "night")
+      (shiftKindValue !== "day" && shiftKindValue !== "mid" && shiftKindValue !== "night")
     ) {
       await answerCallbackQuery(callbackQuery.id, "Invalid shift request.");
       return;
