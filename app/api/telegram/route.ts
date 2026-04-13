@@ -58,6 +58,8 @@ type MatrixSectionPreview = {
   headerRows: number;
   width: number;
   columnWidths?: number[];
+  accent: string;
+  badge: string;
 };
 
 const REAL_TIME_SECTION_COUNT = 5;
@@ -248,8 +250,10 @@ async function getRealTimeMatrixSection(sectionIndex: number): Promise<MatrixSec
         subtitle: "Section 2 of 5",
         rows,
         headerRows: 2,
-        width: 2300,
-        columnWidths: [160, ...Array.from({ length: Math.max(rows[0]?.length ?? 1, 2) - 1 }, () => 135)],
+        width: 1980,
+        columnWidths: [150, ...Array.from({ length: Math.max(rows[0]?.length ?? 1, 2) - 1 }, () => 122)],
+        accent: "#2563eb",
+        badge: "📆",
       };
     }
     case 2: {
@@ -259,8 +263,10 @@ async function getRealTimeMatrixSection(sectionIndex: number): Promise<MatrixSec
         subtitle: "Section 3 of 5",
         rows,
         headerRows: 1,
-        width: 2400,
-        columnWidths: [520, 240, 260, 300, 1080],
+        width: 1800,
+        columnWidths: [350, 160, 180, 170, 940],
+        accent: "#7c3aed",
+        badge: "👥",
       };
     }
     case 3: {
@@ -270,8 +276,10 @@ async function getRealTimeMatrixSection(sectionIndex: number): Promise<MatrixSec
         subtitle: "Section 4 of 5",
         rows,
         headerRows: 2,
-        width: 1500,
-        columnWidths: [460, 220, 220, 220, 220],
+        width: 1480,
+        columnWidths: [420, 210, 210, 210, 210],
+        accent: "#059669",
+        badge: "🇻🇳",
       };
     }
     case 4: {
@@ -281,8 +289,10 @@ async function getRealTimeMatrixSection(sectionIndex: number): Promise<MatrixSec
         subtitle: "Section 5 of 5",
         rows,
         headerRows: 2,
-        width: 2260,
-        columnWidths: [780, 175, 175, 175, 190, 190, 190, 210, 150],
+        width: 1880,
+        columnWidths: [500, 120, 120, 120, 150, 150, 150, 170, 120],
+        accent: "#ea580c",
+        badge: "📋",
       };
     }
     default:
@@ -389,14 +399,15 @@ function buildSheetCaption(sheetTitle: string, rowOffset: number, rowCount: numb
 }
 
 function buildRealTimeSummaryCaption(preview: RealTimePreview) {
-  return `REAL TIME
+  return `📊 REAL TIME
+🟢 Live Summary
 ${preview.timestamp}
-Summary (1 of ${REAL_TIME_SECTION_COUNT})`;
+1 of ${REAL_TIME_SECTION_COUNT}`;
 }
 
 function buildRealTimeSectionCaption(preview: MatrixSectionPreview) {
-  return `REAL TIME
-${preview.title}
+  return `📊 REAL TIME
+${preview.badge} ${preview.title}
 ${preview.subtitle}`;
 }
 
@@ -410,14 +421,14 @@ function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boo
 
   if (page > 0) {
     navigationButtons.push({
-      text: "Previous",
+      text: "⬅️ Previous",
       callback_data: `sheet:${sheetIndex}:${page - 1}`,
     });
   }
 
   if (hasNextPage) {
     navigationButtons.push({
-      text: "Next",
+      text: "Next ➡️",
       callback_data: `sheet:${sheetIndex}:${page + 1}`,
     });
   }
@@ -426,7 +437,7 @@ function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boo
     inlineKeyboard.push(navigationButtons);
   }
 
-  inlineKeyboard.push([{ text: "All sheets", callback_data: "menu:0" }]);
+  inlineKeyboard.push([{ text: "📚 All sheets", callback_data: "menu:0" }]);
 
   return { inline_keyboard: inlineKeyboard };
 }
@@ -666,14 +677,14 @@ async function renderGenericSheetImage(
 }
 
 async function renderRealTimeImage(preview: RealTimePreview) {
-  const width = 1900;
-  const height = Math.max(1500, 260 + preview.rows.length * 62);
+  const width = 1700;
+  const height = Math.max(1540, 320 + preview.rows.length * 58);
   const columns = [
-    { key: "platform", label: preview.headers[0], width: 1100 },
-    { key: "dayShift", label: preview.headers[1], width: 200 },
-    { key: "nightShift", label: preview.headers[2], width: 200 },
-    { key: "midShift", label: preview.headers[3], width: 200 },
-    { key: "total", label: preview.headers[4], width: 200 },
+    { key: "platform", label: preview.headers[0], width: 960 },
+    { key: "dayShift", label: preview.headers[1], width: 170 },
+    { key: "nightShift", label: preview.headers[2], width: 170 },
+    { key: "midShift", label: preview.headers[3], width: 170 },
+    { key: "total", label: preview.headers[4], width: 170 },
   ] as const;
 
   const image = new ImageResponse(
@@ -685,10 +696,11 @@ async function renderRealTimeImage(preview: RealTimePreview) {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          background: "#ffffff",
+          background: "linear-gradient(180deg, #f7f9f7 0%, #eef3ef 100%)",
           color: "#111827",
           fontFamily: "Georgia, serif",
           boxSizing: "border-box",
+          padding: "30px",
         },
       },
       [
@@ -700,12 +712,15 @@ async function renderRealTimeImage(preview: RealTimePreview) {
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
-              background: "#3f725c",
+              background: "linear-gradient(135deg, #3f725c 0%, #244536 100%)",
               color: "#ffffff",
               padding: "18px 26px",
-              borderBottom: "3px solid #1f2937",
-              fontSize: "56px",
+              border: "3px solid #244536",
+              borderBottom: "0",
+              borderRadius: "28px 28px 0 0",
+              fontSize: "52px",
               fontWeight: 700,
+              letterSpacing: "1px",
             },
           },
           preview.timestamp,
@@ -716,8 +731,10 @@ async function renderRealTimeImage(preview: RealTimePreview) {
             key: "thead",
             style: {
               display: "flex",
-              background: "#3f725c",
+              background: "#355f4d",
               color: "#ffffff",
+              borderLeft: "3px solid #244536",
+              borderRight: "3px solid #244536",
               borderBottom: "3px solid #1f2937",
             },
           },
@@ -746,7 +763,9 @@ async function renderRealTimeImage(preview: RealTimePreview) {
               key: `${row.platform}-${index}`,
               style: {
                 display: "flex",
-                background: row.isTotal ? "#fff200" : index % 2 === 0 ? "#ffffff" : "#f8fafc",
+                background: row.isTotal ? "#fde047" : index % 2 === 0 ? "#ffffff" : "#f3f7f4",
+                borderLeft: "3px solid #244536",
+                borderRight: "3px solid #244536",
                 borderBottom: "2px solid #1f2937",
               },
             },
@@ -789,7 +808,8 @@ async function renderMatrixSectionImage(preview: MatrixSectionPreview) {
     (_, index) => suppliedWidths[index] ?? fallbackWidth,
   );
   const bodyRowCount = Math.max(preview.rows.length - preview.headerRows, 0);
-  const height = Math.max(950, 220 + preview.headerRows * 74 + bodyRowCount * 58);
+  const isTeamLeaders = preview.title === "Team Leaders";
+  const height = Math.max(1080, 260 + preview.headerRows * 82 + bodyRowCount * (isTeamLeaders ? 66 : 58));
 
   const image = new ImageResponse(
     createElement(
@@ -800,10 +820,11 @@ async function renderMatrixSectionImage(preview: MatrixSectionPreview) {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          background: "#ffffff",
+          background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
           color: "#111827",
           fontFamily: "Georgia, serif",
           boxSizing: "border-box",
+          padding: "28px",
         },
       },
       [
@@ -816,10 +837,12 @@ async function renderMatrixSectionImage(preview: MatrixSectionPreview) {
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              background: "#3f725c",
+              background: `linear-gradient(135deg, ${preview.accent} 0%, #1f2937 100%)`,
               color: "#ffffff",
-              padding: "20px 28px",
-              borderBottom: "3px solid #1f2937",
+              padding: "22px 28px",
+              borderRadius: "28px 28px 0 0",
+              border: `3px solid ${preview.accent}`,
+              borderBottom: "0",
             },
           },
           [
@@ -832,7 +855,7 @@ async function renderMatrixSectionImage(preview: MatrixSectionPreview) {
                   fontWeight: 700,
                 },
               },
-              preview.title,
+              `${preview.badge} ${preview.title}`,
             ),
             createElement(
               "div",
@@ -856,12 +879,14 @@ async function renderMatrixSectionImage(preview: MatrixSectionPreview) {
                 display: "flex",
                 background:
                   rowIndex < preview.headerRows
-                    ? "#3f725c"
+                    ? preview.accent
                     : rowIndex % 2 === 0
                       ? "#ffffff"
-                      : "#f8fafc",
+                      : "#f7f8fc",
                 color: rowIndex < preview.headerRows ? "#ffffff" : "#111827",
-                borderBottom: "2px solid #1f2937",
+                borderLeft: `3px solid ${preview.accent}`,
+                borderRight: `3px solid ${preview.accent}`,
+                borderBottom: "2px solid #cbd5e1",
               },
             },
             Array.from({ length: columnCount }, (_, columnIndex) =>
@@ -874,12 +899,12 @@ async function renderMatrixSectionImage(preview: MatrixSectionPreview) {
                     padding: rowIndex < preview.headerRows ? "12px 10px" : "10px 10px",
                     borderRight: columnIndex === columnCount - 1 ? "0" : "2px solid #1f2937",
                     textAlign: columnIndex === 0 ? "left" : "center",
-                    fontSize: rowIndex < preview.headerRows ? "26px" : "24px",
-                    fontWeight: rowIndex < preview.headerRows ? 700 : 600,
+                    fontSize: rowIndex < preview.headerRows ? "26px" : isTeamLeaders ? "21px" : "24px",
+                    fontWeight: rowIndex < preview.headerRows ? 700 : columnIndex === 0 ? 700 : 600,
                     whiteSpace: "pre-wrap",
                     wordBreak: "break-word",
                     lineHeight: 1.15,
-                    minHeight: rowIndex < preview.headerRows ? "60px" : "52px",
+                    minHeight: rowIndex < preview.headerRows ? "64px" : isTeamLeaders ? "60px" : "52px",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: columnIndex === 0 ? "flex-start" : "center",
