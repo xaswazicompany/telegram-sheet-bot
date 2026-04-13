@@ -92,6 +92,36 @@ type ShiftingPreview = {
   currentSection: ShiftingSection;
 };
 
+type BasicsStep = {
+  title: string;
+  subtitle: string;
+  points: string[];
+  accent: string;
+  badge: string;
+};
+
+type BasicsPreview = {
+  steps: BasicsStep[];
+};
+
+type WorkfolioEmailEntry = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+type WorkfolioEmailSection = {
+  title: string;
+  badge: string;
+  entries: WorkfolioEmailEntry[];
+};
+
+type WorkfolioEmailPreview = {
+  sections: WorkfolioEmailSection[];
+  page: number;
+  currentSection: WorkfolioEmailSection;
+};
+
 type SheetNavigation = {
   inline_keyboard: InlineKeyboardButton[][];
 };
@@ -193,6 +223,39 @@ function getSheetAccent(sheetTitle: string) {
   }
 
   return palette[hash % palette.length];
+}
+
+function getSheetWindowConfig(sheetTitle: string) {
+  const title = sheetTitle.toLowerCase();
+
+  if (title.includes("account")) {
+    return { rowsPerPage: 8, columnsToShow: 13 };
+  }
+
+  if (title.includes("attendance")) {
+    return { rowsPerPage: 8, columnsToShow: 12 };
+  }
+
+  if (title.includes("daily transactions")) {
+    return { rowsPerPage: 8, columnsToShow: 12 };
+  }
+
+  if (title.includes("april 1-15") || title.includes("april 16-30")) {
+    return { rowsPerPage: 8, columnsToShow: 12 };
+  }
+
+  if (title.includes("workfolio&tl")) {
+    return { rowsPerPage: 8, columnsToShow: 10 };
+  }
+
+  if (title.includes("meeting agenda")) {
+    return { rowsPerPage: 8, columnsToShow: 6 };
+  }
+
+  return {
+    rowsPerPage: getPreviewRows(),
+    columnsToShow: getPreviewColumns(),
+  };
 }
 
 function buildDisplayRows(rows: string[][], rowOffset: number) {
@@ -371,6 +434,56 @@ function isShiftingSectionHeader(row: string[]) {
   return Boolean(e) && !f && !g && !h;
 }
 
+async function getBasicsWithdrawPreview(): Promise<BasicsPreview> {
+  const rows = await readSheetRange("BASICS WITHDARW", "A1:I8");
+  const columns = [0, 3, 6];
+  const accents = ["#2563eb", "#7c3aed", "#ea580c"];
+  const badges = ["🔐", "🔔", "💸"];
+
+  const steps = columns.map((startColumn, index) => ({
+    title: cleanCell(rows[0]?.[startColumn] ?? `STEP-${index + 1}`),
+    subtitle: cleanCell(rows[1]?.[startColumn] ?? ""),
+    points: rows
+      .slice(2)
+      .map((row) => cleanCell(row[startColumn] ?? ""))
+      .filter(Boolean),
+    accent: accents[index],
+    badge: badges[index],
+  }));
+
+  return { steps };
+}
+
+async function getWorkfolioEmailPreview(page: number): Promise<WorkfolioEmailPreview> {
+  const rows = await readSheetRange("WORKFOLIO EMAIL", "A1:I120");
+  const sectionDefs = [
+    { title: cleanCell(rows[0]?.[0] ?? "DAY SHIFT"), badge: "🌤️", columns: [0, 1, 2] },
+    { title: cleanCell(rows[0]?.[3] ?? "MID SHIFT"), badge: "🌇", columns: [3, 4, 5] },
+    { title: cleanCell(rows[0]?.[6] ?? "NIGHT SHIFT"), badge: "🌙", columns: [6, 7, 8] },
+  ];
+
+  const sections = sectionDefs.map((section) => ({
+    title: section.title,
+    badge: section.badge,
+    entries: rows
+      .slice(2)
+      .map((row) => ({
+        id: cleanCell(row[section.columns[0]] ?? ""),
+        name: cleanCell(row[section.columns[1]] ?? ""),
+        email: cleanCell(row[section.columns[2]] ?? ""),
+      }))
+      .filter((entry) => entry.id || entry.name || entry.email),
+  }));
+
+  const safePage = Math.max(0, Math.min(page, sections.length - 1));
+
+  return {
+    sections,
+    page: safePage,
+    currentSection: sections[safePage],
+  };
+}
+
 async function getShiftingPreview(page: number): Promise<ShiftingPreview> {
   const rows = await readSheetRange("SHIFTING", "A1:R220");
   const summaryRows = rows.slice(1, 10);
@@ -433,7 +546,15 @@ async function getShiftingPreview(page: number): Promise<ShiftingPreview> {
 
 function buildSheetCaption(sheetTitle: string, rowOffset: number, rowCount: number, rows: string[][]) {
   const lastVisibleRow = rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset;
-  return `${sheetTitle}\nRows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
+  return `${getSheetBadge(sheetTitle)} ${sheetTitle}\nRows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
+}
+
+function buildBasicsCaption() {
+  return "📘 BASICS WITHDRAW\nStep by step guide\nRead-only training view";
+}
+
+function buildWorkfolioEmailCaption(preview: WorkfolioEmailPreview) {
+  return `📧 WORKFOLIO EMAIL\n${preview.currentSection.badge} ${preview.currentSection.title}\nSection ${preview.page + 1} of ${preview.sections.length}`;
 }
 
 function buildRealTimeSummaryCaption(preview: RealTimePreview) {
@@ -716,6 +837,257 @@ async function renderGenericSheetImage(
       width,
       height,
     },
+  );
+
+  return image.arrayBuffer();
+}
+
+async function renderBasicsWithdrawImage(preview: BasicsPreview) {
+  const width = 1800;
+  const height = 1200;
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
+          color: "#111827",
+          fontFamily: "Georgia, serif",
+          boxSizing: "border-box",
+          padding: "30px",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "linear-gradient(135deg, #1d4ed8 0%, #1f2937 100%)",
+              color: "#ffffff",
+              padding: "24px 28px",
+              borderRadius: "30px",
+              marginBottom: "24px",
+            },
+          },
+          [
+            createElement("div", { key: "title", style: { fontSize: "52px", fontWeight: 700 } }, "📘 BASICS WITHDRAW"),
+            createElement("div", { key: "sub", style: { fontSize: "24px", marginTop: "8px" } }, "Quick guide for new staff and TLs"),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "cards",
+            style: {
+              display: "flex",
+              gap: "22px",
+              flex: 1,
+            },
+          },
+          preview.steps.map((step) =>
+            createElement(
+              "div",
+              {
+                key: step.title,
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  width: "33%",
+                  background: "#ffffff",
+                  borderRadius: "26px",
+                  overflow: "hidden",
+                  border: `3px solid ${step.accent}`,
+                  boxShadow: "0 12px 30px rgba(15, 23, 42, 0.10)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "card-header",
+                    style: {
+                      background: `linear-gradient(135deg, ${step.accent} 0%, #1f2937 100%)`,
+                      color: "#ffffff",
+                      padding: "20px 22px",
+                    },
+                  },
+                  [
+                    createElement("div", { key: "title", style: { fontSize: "30px", fontWeight: 700 } }, `${step.badge} ${step.title}`),
+                    createElement("div", { key: "subtitle", style: { fontSize: "18px", marginTop: "8px" } }, step.subtitle),
+                  ],
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "points",
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      padding: "18px",
+                      gap: "14px",
+                    },
+                  },
+                  step.points.map((point, index) =>
+                    createElement(
+                      "div",
+                      {
+                        key: `${step.title}-${index}`,
+                        style: {
+                          display: "flex",
+                          background: index % 2 === 0 ? "#f8fafc" : "#eef2ff",
+                          borderRadius: "18px",
+                          padding: "14px 16px",
+                          fontSize: "18px",
+                          lineHeight: 1.25,
+                        },
+                      },
+                      point,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+    { width, height },
+  );
+
+  return image.arrayBuffer();
+}
+
+async function renderWorkfolioEmailImage(preview: WorkfolioEmailPreview) {
+  const section = preview.currentSection;
+  const width = 1500;
+  const height = Math.max(980, 260 + section.entries.length * 72);
+  const accent = preview.page === 0 ? "#2563eb" : preview.page === 1 ? "#7c3aed" : "#0f766e";
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #f8fafc 0%, #eff6ff 100%)",
+          color: "#111827",
+          fontFamily: "Georgia, serif",
+          boxSizing: "border-box",
+          padding: "28px",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: `linear-gradient(135deg, ${accent} 0%, #1f2937 100%)`,
+              color: "#ffffff",
+              padding: "22px 28px",
+              borderRadius: "28px 28px 0 0",
+              border: `3px solid ${accent}`,
+              borderBottom: "0",
+            },
+          },
+          [
+            createElement("div", { key: "title", style: { fontSize: "46px", fontWeight: 700 } }, `📧 ${section.badge} ${section.title}`),
+            createElement("div", { key: "sub", style: { fontSize: "22px", marginTop: "8px" } }, `Email contacts · Section ${preview.page + 1} of ${preview.sections.length}`),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "thead",
+            style: {
+              display: "flex",
+              background: accent,
+              color: "#ffffff",
+              borderLeft: `3px solid ${accent}`,
+              borderRight: `3px solid ${accent}`,
+              borderBottom: "3px solid #1f2937",
+            },
+          },
+          [
+            ["ID", 220],
+            ["NAME", 540],
+            ["EMAIL ADDRESS", 680],
+          ].map(([label, widthValue], index) =>
+            createElement(
+              "div",
+              {
+                key: String(label),
+                style: {
+                  width: `${widthValue}px`,
+                  padding: "14px 12px",
+                  borderRight: index === 2 ? "0" : "2px solid #1f2937",
+                  textAlign: index === 0 ? "center" : "left",
+                  fontSize: "24px",
+                  fontWeight: 700,
+                },
+              },
+              String(label),
+            ),
+          ),
+        ),
+        ...section.entries.map((entry, index) =>
+          createElement(
+            "div",
+            {
+              key: `${entry.id}-${index}`,
+              style: {
+                display: "flex",
+                background: index % 2 === 0 ? "#ffffff" : "#f7f8fc",
+                borderLeft: `3px solid ${accent}`,
+                borderRight: `3px solid ${accent}`,
+                borderBottom: "2px solid #cbd5e1",
+              },
+            },
+            [
+              [entry.id || "-", 220, "center"],
+              [entry.name || "-", 540, "left"],
+              [entry.email || "-", 680, "left"],
+            ].map(([value, widthValue, align], cellIndex) =>
+              createElement(
+                "div",
+                {
+                  key: `${entry.id}-${cellIndex}`,
+                  style: {
+                    width: `${widthValue}px`,
+                    padding: "14px 12px",
+                    borderRight: cellIndex === 2 ? "0" : "2px solid #cbd5e1",
+                    textAlign: String(align),
+                    fontSize: "22px",
+                    fontWeight: cellIndex === 1 ? 700 : 600,
+                    display: "flex",
+                    alignItems: "center",
+                  },
+                },
+                String(value),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+    { width, height },
   );
 
   return image.arrayBuffer();
@@ -1320,7 +1692,7 @@ async function sendMenu(chatId: number, text?: string) {
     chat_id: chatId,
     text:
       text ??
-      "Choose a sheet below. The bot reads your private spreadsheet and shows it here in Telegram.",
+      "Choose a dashboard below. This bot shows your private team sheets in read-only mode for staff and TLs.",
     reply_markup: replyMarkup,
   });
 }
@@ -1363,15 +1735,24 @@ async function showSheet(
     }
 
     replyMarkup = buildSectionNavigation(sheetIndex, safePage, REAL_TIME_SECTION_COUNT);
+  } else if (sheet.title === "BASICS WITHDARW") {
+    const preview = await getBasicsWithdrawPreview();
+    imageBuffer = await renderBasicsWithdrawImage(preview);
+    caption = buildBasicsCaption();
+    replyMarkup = { inline_keyboard: [[{ text: "📚 All sheets", callback_data: "menu:0" }]] };
+  } else if (sheet.title === "WORKFOLIO EMAIL") {
+    const preview = await getWorkfolioEmailPreview(page);
+    imageBuffer = await renderWorkfolioEmailImage(preview);
+    caption = buildWorkfolioEmailCaption(preview);
+    replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
   } else if (sheet.title === "SHIFTING") {
     const preview = await getShiftingPreview(page);
     imageBuffer = await renderShiftingImage(preview);
     caption = buildShiftingCaption(preview);
     replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
   } else {
-    const rowsPerPage = getPreviewRows();
-    const columnsToShow = getPreviewColumns();
-    const window = await readSheetWindow(sheet.title, page, rowsPerPage, columnsToShow);
+    const config = getSheetWindowConfig(sheet.title);
+    const window = await readSheetWindow(sheet.title, page, config.rowsPerPage, config.columnsToShow);
     imageBuffer = await renderGenericSheetImage(
       sheet.title,
       window.rowOffset,
@@ -1404,6 +1785,20 @@ async function handleMessage(message: TelegramMessage) {
 
   if (text === "/start" || text === "/menu") {
     await sendMenu(message.chat.id);
+    return;
+  }
+
+  if (text === "/help") {
+    await callTelegram("sendMessage", {
+      chat_id: message.chat.id,
+      text: `Commands:
+/start - open sheet menu
+/menu - open sheet menu
+/help - show commands
+/chatid - show this chat ID
+
+This bot is read-only and made for staff/TL viewing.`,
+    });
     return;
   }
 
