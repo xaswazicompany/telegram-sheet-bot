@@ -1494,6 +1494,173 @@ async function renderWorkfolioEmailImage(preview: WorkfolioEmailPreview) {
   return image.arrayBuffer();
 }
 
+async function renderDashboardHomeImage() {
+  const width = 1400;
+  const height = 920;
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #08131f 0%, #0f172a 42%, #12263a 100%)",
+          color: "#f8fafc",
+          padding: "44px",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "hero",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "34px",
+              padding: "48px 42px 40px",
+              background: "linear-gradient(135deg, #163225 0%, #1f4f46 42%, #1e3a5f 100%)",
+              boxShadow: "0 24px 60px rgba(2, 6, 23, 0.35)",
+              border: "1px solid rgba(255,255,255,0.10)",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "20px",
+                  letterSpacing: "3px",
+                  textTransform: "uppercase",
+                  color: "#bfdbfe",
+                  textAlign: "center",
+                },
+              },
+              "Withdraw Team",
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "66px",
+                  fontWeight: 800,
+                  marginTop: "12px",
+                  textAlign: "center",
+                },
+              },
+              "Live Operations Center",
+            ),
+            createElement(
+              "div",
+              {
+                key: "subtitle",
+                style: {
+                  fontSize: "26px",
+                  marginTop: "14px",
+                  color: "#e2e8f0",
+                  textAlign: "center",
+                },
+              },
+              "Real-time monitoring and shifting control for staff and team leaders.",
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "cards",
+            style: {
+              display: "flex",
+              gap: "24px",
+              marginTop: "28px",
+            },
+          },
+          [
+            {
+              badge: "📊",
+              title: "REAL TIME BOARD",
+              subtitle: "Live platform counts, team leaders, daily shift codes, and operational metrics.",
+              accent: "linear-gradient(135deg, #0f766e 0%, #1e3a5f 100%)",
+            },
+            {
+              badge: "🔄",
+              title: "SHIFTING BOARD",
+              subtitle: "Platform overview with Day, Mid, and Night staff assignment control.",
+              accent: "linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%)",
+            },
+          ].map((card) =>
+            createElement(
+              "div",
+              {
+                key: card.title,
+                style: {
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  borderRadius: "30px",
+                  padding: "28px",
+                  background: card.accent,
+                  boxShadow: "0 20px 40px rgba(15, 23, 42, 0.24)",
+                  minHeight: "250px",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "badge",
+                    style: {
+                      fontSize: "54px",
+                    },
+                  },
+                  card.badge,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "card-title",
+                    style: {
+                      fontSize: "34px",
+                      fontWeight: 800,
+                      marginTop: "18px",
+                    },
+                  },
+                  card.title,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "card-subtitle",
+                    style: {
+                      fontSize: "22px",
+                      marginTop: "12px",
+                      lineHeight: 1.35,
+                      color: "#eff6ff",
+                    },
+                  },
+                  card.subtitle,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+    { width, height },
+  );
+
+  return image.arrayBuffer();
+}
+
 async function renderRealTimeImage(preview: RealTimePreview) {
   const width = 1700;
   const height = Math.max(1540, 320 + preview.rows.length * 58);
@@ -1949,7 +2116,7 @@ async function renderShiftingOverviewImage(
                   textAlign: "center",
                 },
               },
-              "Shifting Overview",
+              "Team Shifting Board",
             ),
             createElement(
               "div",
@@ -1962,7 +2129,7 @@ async function renderShiftingOverviewImage(
                   textAlign: "center",
                 },
               },
-              "All Platforms",
+              "SHIFTING",
             ),
             createElement(
               "div",
@@ -1975,7 +2142,7 @@ async function renderShiftingOverviewImage(
                   textAlign: "center",
                 },
               },
-              `${platformCount} platform${platformCount === 1 ? "" : "s"} available`,
+              `${platformCount} platform${platformCount === 1 ? "" : "s"} available · control center ready`,
             ),
           ],
         ),
@@ -2103,7 +2270,7 @@ async function renderShiftingImage(preview: ShiftingPreview) {
                   textAlign: "center",
                 },
               },
-              "Shifting Members",
+              "Shifting Command Center",
             ),
             createElement(
               "div",
@@ -2129,7 +2296,7 @@ async function renderShiftingImage(preview: ShiftingPreview) {
                   textAlign: "center",
                 },
               },
-              `${shiftBadge} ${shiftLabel} • ${preview.entries.length} members • ${pageLabel}`,
+              `${shiftBadge} ${shiftLabel} • ${preview.entries.length} team members • ${pageLabel}`,
             ),
           ],
         ),
@@ -2179,17 +2346,16 @@ async function renderShiftingImage(preview: ShiftingPreview) {
 
 async function sendMenu(chatId: number, text?: string) {
   const replyMarkup = await buildSheetKeyboard();
+  const imageBuffer = await renderDashboardHomeImage();
 
-  await callTelegram("sendMessage", {
-    chat_id: chatId,
-    text:
-      text ??
-      "WITHDRAW TEAM Dashboard
+  await sendTelegramPhoto(
+    chatId,
+    imageBuffer,
+    text ?? "WITHDRAW TEAM
 Live Operations Center
-
 Choose one board to open.",
-    reply_markup: replyMarkup,
-  });
+    replyMarkup,
+  );
 }
 
 async function showSheet(
