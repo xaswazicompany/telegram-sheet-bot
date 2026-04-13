@@ -1,3 +1,5 @@
+import { ImageResponse } from "next/og";
+import { createElement } from "react";
 import { NextResponse } from "next/server";
 import { listSheetTabs, readSheetWindow } from "@/lib/googleSheets";
 
@@ -9,6 +11,7 @@ type TelegramMessage = {
   message_id: number;
   chat: TelegramChat;
   text?: string;
+  photo?: Array<Record<string, unknown>>;
 };
 
 type TelegramCallbackQuery = {
@@ -25,6 +28,11 @@ type TelegramUpdate = {
 type InlineKeyboardButton = {
   text: string;
   callback_data: string;
+};
+
+type DisplayRow = {
+  rowLabel: string;
+  content: string;
 };
 
 function getTelegramBotToken() {
@@ -58,13 +66,6 @@ function getPreviewColumns() {
   return Math.max(1, Number(process.env.TELEGRAM_SHEET_PREVIEW_COLUMNS ?? "8"));
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
 function isAllowedChat(chatId: number) {
   const allowedChatIds = getAllowedChatIds();
 
@@ -73,6 +74,75 @@ function isAllowedChat(chatId: number) {
   }
 
   return allowedChatIds.includes(String(chatId));
+}
+
+function cleanCell(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function shortenCell(value: string, maxLength = 18) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function buildDisplayRows(rows: string[][], rowOffset: number) {
+  const visibleRows = rows
+    .map((row, index) => ({
+      rowLabel: String(rowOffset + index),
+      content: row
+        .map((cell) => cleanCell(cell || "-"))
+        .filter(Boolean)
+        .map((cell) => shortenCell(cell))
+        .join("   |   "),
+    }))
+    .filter((row) => row.content.length > 0);
+
+  if (visibleRows.length > 0) {
+    return visibleRows;
+  }
+
+  return [
+    {
+      rowLabel: "-",
+      content: "No data found in this range yet.",
+    },
+  ];
+}
+
+function buildSheetCaption(sheetTitle: string, rowOffset: number, rowCount: number, rows: string[][]) {
+  const lastVisibleRow = rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset;
+  return `${sheetTitle}
+Rows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
+}
+
+function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boolean) {
+  const inlineKeyboard: InlineKeyboardButton[][] = [];
+  const navigationButtons: InlineKeyboardButton[] = [];
+
+  if (page > 0) {
+    navigationButtons.push({
+      text: "Previous",
+      callback_data: `sheet:${sheetIndex}:${page - 1}`,
+    });
+  }
+
+  if (hasNextPage) {
+    navigationButtons.push({
+      text: "Next",
+      callback_data: `sheet:${sheetIndex}:${page + 1}`,
+    });
+  }
+
+  if (navigationButtons.length > 0) {
+    inlineKeyboard.push(navigationButtons);
+  }
+
+  inlineKeyboard.push([{ text: "All sheets", callback_data: "menu:0" }]);
+
+  return { inline_keyboard: inlineKeyboard };
 }
 
 async function callTelegram(method: string, payload: Record<string, unknown>) {
@@ -91,10 +161,46 @@ async function callTelegram(method: string, payload: Record<string, unknown>) {
   }
 }
 
+async function sendTelegramPhoto(
+  chatId: number,
+  imageBuffer: ArrayBuffer,
+  caption: string,
+  replyMarkup: { inline_keyboard: InlineKeyboardButton[][] },
+) {
+  const token = getTelegramBotToken();
+  const formData = new FormData();
+
+  formData.append("chat_id", String(chatId));
+  formData.append(
+    "photo",
+    new Blob([imageBuffer], { type: "image/png" }),
+    "sheet-preview.png",
+  );
+  formData.append("caption", caption);
+  formData.append("reply_markup", JSON.stringify(replyMarkup));
+
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Telegram API sendPhoto failed: ${response.status} ${body}`);
+  }
+}
+
 async function answerCallbackQuery(callbackQueryId: string, text?: string) {
   await callTelegram("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
     text,
+  });
+}
+
+async function deleteTelegramMessage(chatId: number, messageId: number) {
+  await callTelegram("deleteMessage", {
+    chat_id: chatId,
+    message_id: messageId,
   });
 }
 
@@ -116,27 +222,157 @@ async function buildSheetKeyboard() {
   };
 }
 
-function formatRows(rows: string[][], rowOffset: number) {
-  const lines = rows
-    .filter((row) => row.some((cell) => cell.length > 0))
-    .map((row, index) => {
-      const values = row.map((cell) => (cell.length > 0 ? cell : "-"));
-      return `${rowOffset + index}. ${values.join(" | ")}`;
-    });
+async function renderSheetImage(
+  sheetTitle: string,
+  rowOffset: number,
+  rowCount: number,
+  rows: string[][],
+) {
+  const displayRows = buildDisplayRows(rows, rowOffset);
+  const width = 1200;
+  const height = Math.max(720, 240 + displayRows.length * 88);
+  const lastVisibleRow = rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset;
 
-  if (lines.length === 0) {
-    return "No data found in this range yet.";
-  }
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #101726 0%, #1a2436 100%)",
+          color: "#f8fafc",
+          padding: "42px",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              marginBottom: "26px",
+              padding: "28px 32px",
+              borderRadius: "28px",
+              background: "rgba(15, 23, 42, 0.82)",
+              border: "1px solid rgba(148, 163, 184, 0.18)",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "24px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  color: "#f59e0b",
+                  marginBottom: "12px",
+                },
+              },
+              "Telegram Sheet View",
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "48px",
+                  fontWeight: 700,
+                  marginBottom: "10px",
+                },
+              },
+              sheetTitle,
+            ),
+            createElement(
+              "div",
+              {
+                key: "meta",
+                style: {
+                  fontSize: "24px",
+                  color: "#cbd5e1",
+                },
+              },
+              `Rows ${rowOffset}-${lastVisibleRow} of ${rowCount}`,
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "rows",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              gap: "14px",
+            },
+          },
+          displayRows.map((row, index) =>
+            createElement(
+              "div",
+              {
+                key: `${row.rowLabel}-${index}`,
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "18px 22px",
+                  borderRadius: "22px",
+                  background: index % 2 === 0 ? "rgba(30, 41, 59, 0.92)" : "rgba(15, 23, 42, 0.92)",
+                  border: "1px solid rgba(148, 163, 184, 0.14)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: `label-${row.rowLabel}`,
+                    style: {
+                      minWidth: "74px",
+                      padding: "10px 14px",
+                      borderRadius: "14px",
+                      background: "rgba(245, 158, 11, 0.16)",
+                      color: "#fcd34d",
+                      fontSize: "26px",
+                      fontWeight: 700,
+                      textAlign: "center",
+                      marginRight: "18px",
+                    },
+                  },
+                  row.rowLabel,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: `content-${row.rowLabel}`,
+                    style: {
+                      display: "flex",
+                      flex: 1,
+                      fontSize: "28px",
+                      color: "#e2e8f0",
+                    },
+                  },
+                  row.content,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+    {
+      width,
+      height,
+    },
+  );
 
-  return lines.join("\n");
-}
-
-function truncateTelegramHtml(text: string, maxLength = 3900) {
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxLength - 20)}\n...truncated`;
+  return image.arrayBuffer();
 }
 
 async function sendMenu(chatId: number, text?: string) {
@@ -174,52 +410,27 @@ async function showSheet(
   const rowsPerPage = getPreviewRows();
   const columnsToShow = getPreviewColumns();
   const window = await readSheetWindow(sheet.title, page, rowsPerPage, columnsToShow);
-  const lastVisibleRow =
-    window.rows.length > 0 ? window.rowOffset + window.rows.length - 1 : window.rowOffset;
-  const text = truncateTelegramHtml(
-    [
-      `<b>${escapeHtml(sheet.title)}</b>`,
-      `Rows ${window.rowOffset}-${lastVisibleRow} of ${sheet.rowCount}`,
-      `Showing up to ${columnsToShow} columns per row.`,
-      "",
-      `<pre>${escapeHtml(formatRows(window.rows, window.rowOffset))}</pre>`,
-    ].join("\n"),
+  const imageBuffer = await renderSheetImage(
+    sheet.title,
+    window.rowOffset,
+    sheet.rowCount,
+    window.rows,
   );
-
-  const navigationButtons: InlineKeyboardButton[] = [];
-
-  if (page > 0) {
-    navigationButtons.push({
-      text: "Previous",
-      callback_data: `sheet:${sheetIndex}:${page - 1}`,
-    });
-  }
-
-  if (window.hasNextPage) {
-    navigationButtons.push({
-      text: "Next",
-      callback_data: `sheet:${sheetIndex}:${page + 1}`,
-    });
-  }
-
-  const inlineKeyboard: InlineKeyboardButton[][] = [];
-
-  if (navigationButtons.length > 0) {
-    inlineKeyboard.push(navigationButtons);
-  }
-
-  inlineKeyboard.push([{ text: "All sheets", callback_data: "menu:0" }]);
+  const caption = buildSheetCaption(
+    sheet.title,
+    window.rowOffset,
+    sheet.rowCount,
+    window.rows,
+  );
+  const replyMarkup = buildSheetNavigation(sheetIndex, page, window.hasNextPage);
 
   await answerCallbackQuery(callbackQuery.id);
-  await callTelegram("editMessageText", {
-    chat_id: message.chat.id,
-    message_id: message.message_id,
-    text,
-    parse_mode: "HTML",
-    reply_markup: {
-      inline_keyboard: inlineKeyboard,
-    },
-  });
+
+  if (message.photo && message.photo.length > 0) {
+    await deleteTelegramMessage(message.chat.id, message.message_id);
+  }
+
+  await sendTelegramPhoto(message.chat.id, imageBuffer, caption, replyMarkup);
 }
 
 async function handleMessage(message: TelegramMessage) {
@@ -241,7 +452,7 @@ async function handleMessage(message: TelegramMessage) {
   if (text === "/chatid") {
     await callTelegram("sendMessage", {
       chat_id: message.chat.id,
-      text: `This chat ID is: ${message.chat.id}` ,
+      text: `This chat ID is: ${message.chat.id}`,
     });
     return;
   }
@@ -253,9 +464,10 @@ async function handleMessage(message: TelegramMessage) {
 }
 
 async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
-  const chatId = callbackQuery.message?.chat.id;
+  const message = callbackQuery.message;
+  const chatId = message?.chat.id;
 
-  if (!chatId) {
+  if (!chatId || !message) {
     await answerCallbackQuery(callbackQuery.id, "Missing chat context.");
     return;
   }
@@ -269,15 +481,15 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
 
   if (data.startsWith("menu:")) {
     await answerCallbackQuery(callbackQuery.id);
-    const replyMarkup = await buildSheetKeyboard();
 
-    await callTelegram("editMessageText", {
-      chat_id: chatId,
-      message_id: callbackQuery.message?.message_id,
-      text:
-        "Choose a sheet below. The bot reads your private spreadsheet and shows it here in Telegram.",
-      reply_markup: replyMarkup,
-    });
+    if (message.photo && message.photo.length > 0) {
+      await deleteTelegramMessage(chatId, message.message_id);
+    }
+
+    await sendMenu(
+      chatId,
+      "Choose a sheet below. The bot reads your private spreadsheet and shows it here in Telegram.",
+    );
     return;
   }
 
