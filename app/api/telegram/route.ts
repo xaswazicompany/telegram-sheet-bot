@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 import { createElement } from "react";
 import { NextResponse } from "next/server";
-import { listSheetTabs, readSheetWindow } from "@/lib/googleSheets";
+import { listSheetTabs, readSheetRange, readSheetWindow } from "@/lib/googleSheets";
 
 type TelegramChat = {
   id: number;
@@ -33,6 +33,23 @@ type InlineKeyboardButton = {
 type DisplayRow = {
   rowLabel: string;
   content: string;
+};
+
+type RealTimeRow = {
+  platform: string;
+  dayShift: string;
+  nightShift: string;
+  midShift: string;
+  total: string;
+};
+
+type RealTimePreview = {
+  timestamp: string;
+  headers: [string, string, string, string, string];
+  rows: RealTimeRow[];
+  hasNextPage: boolean;
+  page: number;
+  rowOffset: number;
 };
 
 function getTelegramBotToken() {
@@ -85,7 +102,7 @@ function shortenCell(value: string, maxLength = 18) {
     return value;
   }
 
-  return `${value.slice(0, maxLength - 1)}…`;
+  return `${value.slice(0, maxLength - 1)}...`;
 }
 
 function buildDisplayRows(rows: string[][], rowOffset: number) {
@@ -112,10 +129,62 @@ function buildDisplayRows(rows: string[][], rowOffset: number) {
   ];
 }
 
+function normalizeRealTimeHeader(value: string) {
+  if (value.toUpperCase() === "PLATFROM") {
+    return "PLATFORM";
+  }
+
+  return value;
+}
+
+async function getRealTimePreview(page: number, rowsPerPage: number): Promise<RealTimePreview> {
+  const safePage = Math.max(0, page);
+  const startRow = 3 + safePage * rowsPerPage;
+  const endRow = startRow + rowsPerPage;
+
+  const [headerRows, dataRows] = await Promise.all([
+    readSheetRange("REAL TIME", "A1:E2"),
+    readSheetRange("REAL TIME", `A${startRow}:E${endRow}`),
+  ]);
+
+  const timestamp = cleanCell(headerRows[0]?.[0] ?? "REAL TIME");
+  const rawHeaders = headerRows[1] ?? ["PLATFORM", "DAY SHIFT", "NIGHT SHIFT", "MID SHIFT", "TOTAL"];
+  const headers = [
+    normalizeRealTimeHeader(rawHeaders[0] ?? "PLATFORM"),
+    rawHeaders[1] ?? "DAY SHIFT",
+    rawHeaders[2] ?? "NIGHT SHIFT",
+    rawHeaders[3] ?? "MID SHIFT",
+    rawHeaders[4] ?? "TOTAL",
+  ] as [string, string, string, string, string];
+
+  const rows = dataRows
+    .filter((row) => cleanCell(row[0] ?? "").length > 0)
+    .map((row) => ({
+      platform: cleanCell(row[0] ?? "-"),
+      dayShift: cleanCell(row[1] ?? "-"),
+      nightShift: cleanCell(row[2] ?? "-"),
+      midShift: cleanCell(row[3] ?? "-"),
+      total: cleanCell(row[4] ?? "-"),
+    }));
+
+  return {
+    timestamp,
+    headers,
+    rows: rows.slice(0, rowsPerPage),
+    hasNextPage: rows.length > rowsPerPage,
+    page: safePage,
+    rowOffset: startRow,
+  };
+}
+
 function buildSheetCaption(sheetTitle: string, rowOffset: number, rowCount: number, rows: string[][]) {
   const lastVisibleRow = rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset;
-  return `${sheetTitle}
-Rows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
+  return `${sheetTitle}\nRows ${rowOffset}-${lastVisibleRow} of ${rowCount}`;
+}
+
+function buildRealTimeCaption(preview: RealTimePreview) {
+  const lastVisibleRow = preview.rows.length > 0 ? preview.rowOffset + preview.rows.length - 1 : preview.rowOffset;
+  return `REAL TIME\n${preview.timestamp}\nPlatforms ${preview.rowOffset - 2}-${lastVisibleRow - 2}`;
 }
 
 function buildSheetNavigation(sheetIndex: number, page: number, hasNextPage: boolean) {
@@ -222,7 +291,7 @@ async function buildSheetKeyboard() {
   };
 }
 
-async function renderSheetImage(
+async function renderGenericSheetImage(
   sheetTitle: string,
   rowOffset: number,
   rowCount: number,
@@ -375,6 +444,188 @@ async function renderSheetImage(
   return image.arrayBuffer();
 }
 
+async function renderRealTimeImage(preview: RealTimePreview) {
+  const width = 1200;
+  const height = Math.max(860, 300 + preview.rows.length * 72);
+  const columns = [
+    { key: "platform", label: preview.headers[0], width: 350 },
+    { key: "dayShift", label: preview.headers[1], width: 180 },
+    { key: "nightShift", label: preview.headers[2], width: 180 },
+    { key: "midShift", label: preview.headers[3], width: 180 },
+    { key: "total", label: preview.headers[4], width: 170 },
+  ] as const;
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "#f4f1ea",
+          color: "#111827",
+          padding: "36px",
+          fontFamily: "Georgia, serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "stamp",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              background: "#3f725c",
+              color: "#ffffff",
+              borderRadius: "20px 20px 0 0",
+              padding: "22px 28px",
+              border: "3px solid #244536",
+              borderBottom: "0",
+              alignItems: "center",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "28px",
+                  letterSpacing: "2px",
+                  marginBottom: "8px",
+                  textTransform: "uppercase",
+                },
+              },
+              "REAL TIME",
+            ),
+            createElement(
+              "div",
+              {
+                key: "time",
+                style: {
+                  fontSize: "54px",
+                  fontWeight: 700,
+                },
+              },
+              preview.timestamp,
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "table",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              border: "3px solid #244536",
+              borderTop: "0",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "thead",
+                style: {
+                  display: "flex",
+                  background: "#3f725c",
+                  color: "#ffffff",
+                  borderBottom: "3px solid #244536",
+                },
+              },
+              columns.map((column) =>
+                createElement(
+                  "div",
+                  {
+                    key: column.key,
+                    style: {
+                      width: `${column.width}px`,
+                      padding: "16px 14px",
+                      borderRight: column.key === "total" ? "0" : "2px solid #244536",
+                      textAlign: "center",
+                      fontSize: "24px",
+                      fontWeight: 700,
+                    },
+                  },
+                  column.label,
+                ),
+              ),
+            ),
+            ...preview.rows.map((row, index) =>
+              createElement(
+                "div",
+                {
+                  key: `${row.platform}-${index}`,
+                  style: {
+                    display: "flex",
+                    background: index % 2 === 0 ? "#ffffff" : "#f6f7f8",
+                    borderBottom:
+                      index === preview.rows.length - 1 ? "0" : "2px solid #1f2937",
+                  },
+                },
+                columns.map((column) =>
+                  createElement(
+                    "div",
+                    {
+                      key: `${row.platform}-${column.key}`,
+                      style: {
+                        width: `${column.width}px`,
+                        padding: "14px 12px",
+                        borderRight: column.key === "total" ? "0" : "2px solid #1f2937",
+                        textAlign: column.key === "platform" ? "left" : "center",
+                        fontSize: column.key === "platform" ? "24px" : "28px",
+                        fontWeight: column.key === "platform" ? 700 : 600,
+                      },
+                    },
+                    row[column.key],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "footer",
+            style: {
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginTop: "18px",
+              color: "#334155",
+              fontSize: "22px",
+            },
+          },
+          [
+            createElement(
+              "div",
+              { key: "range" },
+              `Platforms ${preview.rowOffset - 2}-${preview.rowOffset - 2 + Math.max(preview.rows.length - 1, 0)}`,
+            ),
+            createElement(
+              "div",
+              { key: "page" },
+              `Page ${preview.page + 1}`,
+            ),
+          ],
+        ),
+      ],
+    ),
+    {
+      width,
+      height,
+    },
+  );
+
+  return image.arrayBuffer();
+}
+
 async function sendMenu(chatId: number, text?: string) {
   const replyMarkup = await buildSheetKeyboard();
 
@@ -407,22 +658,28 @@ async function showSheet(
     return;
   }
 
-  const rowsPerPage = getPreviewRows();
-  const columnsToShow = getPreviewColumns();
-  const window = await readSheetWindow(sheet.title, page, rowsPerPage, columnsToShow);
-  const imageBuffer = await renderSheetImage(
-    sheet.title,
-    window.rowOffset,
-    sheet.rowCount,
-    window.rows,
-  );
-  const caption = buildSheetCaption(
-    sheet.title,
-    window.rowOffset,
-    sheet.rowCount,
-    window.rows,
-  );
-  const replyMarkup = buildSheetNavigation(sheetIndex, page, window.hasNextPage);
+  let imageBuffer: ArrayBuffer;
+  let caption: string;
+  let replyMarkup: { inline_keyboard: InlineKeyboardButton[][] };
+
+  if (sheet.title === "REAL TIME") {
+    const preview = await getRealTimePreview(page, getPreviewRows());
+    imageBuffer = await renderRealTimeImage(preview);
+    caption = buildRealTimeCaption(preview);
+    replyMarkup = buildSheetNavigation(sheetIndex, page, preview.hasNextPage);
+  } else {
+    const rowsPerPage = getPreviewRows();
+    const columnsToShow = getPreviewColumns();
+    const window = await readSheetWindow(sheet.title, page, rowsPerPage, columnsToShow);
+    imageBuffer = await renderGenericSheetImage(
+      sheet.title,
+      window.rowOffset,
+      sheet.rowCount,
+      window.rows,
+    );
+    caption = buildSheetCaption(sheet.title, window.rowOffset, sheet.rowCount, window.rows);
+    replyMarkup = buildSheetNavigation(sheetIndex, page, window.hasNextPage);
+  }
 
   await answerCallbackQuery(callbackQuery.id);
 

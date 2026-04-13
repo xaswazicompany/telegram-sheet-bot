@@ -73,6 +73,25 @@ export async function listSheetTabs(): Promise<SheetTab[]> {
     .filter((sheet) => sheet.title);
 }
 
+export async function readSheetRange(
+  sheetName: string,
+  rangeSuffix: string,
+): Promise<string[][]> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getEnv("GOOGLE_SHEETS_SPREADSHEET_ID");
+  const range = `${escapeSheetName(sheetName)}!${rangeSuffix}`;
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range,
+    majorDimension: "ROWS",
+  });
+
+  return (response.data.values ?? []).map((row) =>
+    row.map((cell) => String(cell ?? "").trim()),
+  );
+}
+
 export async function readSheetWindow(
   sheetName: string,
   page = 0,
