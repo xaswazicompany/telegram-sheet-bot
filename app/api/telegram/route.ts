@@ -237,7 +237,7 @@ function getSheetWindowConfig(sheetTitle: string) {
   const title = sheetTitle.toLowerCase();
 
   if (title.includes("account")) {
-    return { rowsPerPage: 8, columnsToShow: 13 };
+    return { rowsPerPage: 6, columnsToShow: 9 };
   }
 
   if (title.includes("attendance")) {
@@ -264,6 +264,23 @@ function getSheetWindowConfig(sheetTitle: string) {
     rowsPerPage: getPreviewRows(),
     columnsToShow: getPreviewColumns(),
   };
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out.`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function buildDisplayRows(rows: string[][], rowOffset: number) {
@@ -2141,12 +2158,20 @@ async function showSheet(
       );
     } else {
       const config = getSheetWindowConfig(sheet.title);
-      const window = await readSheetWindow(sheet.title, page, config.rowsPerPage, config.columnsToShow);
-      imageBuffer = await renderGenericSheetImage(
-        sheet.title,
-        window.rowOffset,
-        sheet.rowCount,
-        window.rows,
+      const window = await withTimeout(
+        readSheetWindow(sheet.title, page, config.rowsPerPage, config.columnsToShow),
+        12000,
+        `${sheet.title} data load`,
+      );
+      imageBuffer = await withTimeout(
+        renderGenericSheetImage(
+          sheet.title,
+          window.rowOffset,
+          sheet.rowCount,
+          window.rows,
+        ),
+        12000,
+        `${sheet.title} image render`,
       );
       caption = buildSheetCaption(sheet.title, window.rowOffset, sheet.rowCount, window.rows);
       replyMarkup = buildSheetNavigation(sheetIndex, page, window.hasNextPage);
@@ -2157,6 +2182,15 @@ async function showSheet(
     }
 
     await sendTelegramPhoto(message.chat.id, imageBuffer, caption, replyMarkup);
+  } catch (error) {
+    console.error(`Failed to render sheet ${sheet.title}`, error);
+    await callTelegram("sendMessage", {
+      chat_id: message.chat.id,
+      text: `⚠️ ${sheet.title} is taking too long right now. Please tap it again in a moment.`,
+      reply_markup: {
+        inline_keyboard: [[{ text: "📚 All sheets", callback_data: "menu:0" }]],
+      },
+    }).catch(() => undefined);
   } finally {
     if (loadingMessageId) {
       await deleteTelegramMessage(message.chat.id, loadingMessageId).catch(() => undefined);
