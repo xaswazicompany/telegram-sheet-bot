@@ -134,6 +134,8 @@ type SheetNavigation = {
   inline_keyboard: InlineKeyboardButton[][];
 };
 
+const DASHBOARD_SHEET_TITLES = ["REAL TIME", "SHIFTING"] as const;
+
 function getTelegramBotToken() {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 
@@ -1063,21 +1065,22 @@ function getLoadingMessage(sheetTitle: string) {
   }
 }
 
-async function buildSheetKeyboard() {
+async function getDashboardSheets() {
   const sheets = await listSheetTabs();
-  const buttons: InlineKeyboardButton[][] = [];
 
-  for (let index = 0; index < sheets.length; index += 2) {
-    buttons.push(
-      sheets.slice(index, index + 2).map((sheet, offset) => ({
-        text: sheet.title,
-        callback_data: `sheet:${index + offset}:0`,
-      })),
-    );
-  }
+  return DASHBOARD_SHEET_TITLES.map((title) => sheets.find((sheet) => sheet.title === title)).filter(
+    (sheet): sheet is NonNullable<(typeof sheets)[number]> => Boolean(sheet),
+  );
+}
+
+async function buildSheetKeyboard() {
+  const sheets = await getDashboardSheets();
 
   return {
-    inline_keyboard: buttons,
+    inline_keyboard: sheets.map((sheet, index) => [{
+      text: `${getSheetBadge(sheet.title)} ${sheet.title}`,
+      callback_data: `sheet:${index}:0`,
+    }]),
   };
 }
 
@@ -2144,7 +2147,7 @@ async function sendMenu(chatId: number, text?: string) {
     chat_id: chatId,
     text:
       text ??
-      "Choose a dashboard below. Professional staff view is live in read-only mode for staff and TLs.",
+      "Choose a dashboard below. Only the two live staff dashboards are available: REAL TIME and SHIFTING.",
     reply_markup: replyMarkup,
   });
 }
@@ -2161,7 +2164,7 @@ async function showSheet(
     return;
   }
 
-  const sheets = await listSheetTabs();
+  const sheets = await getDashboardSheets();
   const sheet = sheets[sheetIndex];
 
   if (!sheet) {
@@ -2289,7 +2292,7 @@ async function handleMessage(message: TelegramMessage) {
 /help - show commands
 /chatid - show this chat ID
 
-This bot is read-only and made for staff/TL viewing.`,
+This bot is read-only and now focused on REAL TIME and SHIFTING only.`,
     });
     return;
   }
@@ -2338,7 +2341,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
 
     await sendMenu(
       chatId,
-      "Choose a dashboard below. Professional staff view is live in read-only mode for staff and TLs.",
+      "Choose a dashboard below. Only the two live staff dashboards are available: REAL TIME and SHIFTING.",
     );
     return;
   }
@@ -2400,7 +2403,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
       return;
     }
 
-    const sheets = await listSheetTabs();
+    const sheets = await getDashboardSheets();
     const sheet = sheets[sheetIndex];
 
     if (sheet?.title === "SHIFTING") {
