@@ -1692,7 +1692,7 @@ async function sendMenu(chatId: number, text?: string) {
     chat_id: chatId,
     text:
       text ??
-      "Choose a dashboard below. This bot shows your private team sheets in read-only mode for staff and TLs.",
+      "Choose a dashboard below. Professional staff view is live in read-only mode for staff and TLs.",
     reply_markup: replyMarkup,
   });
 }
