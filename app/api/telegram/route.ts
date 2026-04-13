@@ -634,30 +634,29 @@ function buildWorkfolioEmailCaption(preview: WorkfolioEmailPreview) {
 
 function buildRealTimeSummaryCaption(preview: RealTimePreview) {
   return `📊 REAL TIME
-🟢 Live Summary
-${preview.timestamp}
-1 of ${REAL_TIME_SECTION_COUNT}`;
+Live Operations Board
+Updated ${preview.timestamp}`;
 }
 
 function buildRealTimeSectionCaption(preview: MatrixSectionPreview) {
   return `📊 REAL TIME
 ${preview.badge} ${preview.title}
-${preview.subtitle}`;
+Operational Detail View`;
 }
 
 function buildShiftingCaption(preview: ShiftingPreview) {
   const shiftLabel =
     preview.shiftKind === "night"
-      ? "🌙 Night"
+      ? "🌙 Night Shift"
       : preview.shiftKind === "mid"
-        ? "🌇 Mid"
-        : "🌤️ Day";
+        ? "🌇 Mid Shift"
+        : "🌤️ Day Shift";
   const pageLabel = preview.totalEntryPages > 1 ? `
-Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "";
+Member Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "";
 
   return `🔄 SHIFTING
 ${preview.currentSection.title}
-${shiftLabel} • ${preview.entries.length} member${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
+${shiftLabel} · ${preview.entries.length} team member${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
 }
 
 function buildSheetNavigation(sheetIndex: number, page: number, totalPages: number, rowLabel?: string): SheetNavigation {
@@ -719,7 +718,7 @@ function buildSheetNavigation(sheetIndex: number, page: number, totalPages: numb
     inlineKeyboard.push(jumpButtons);
   }
 
-  inlineKeyboard.push([{ text: "📚 All sheets", callback_data: "menu:0" }]);
+  inlineKeyboard.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
 
   return { inline_keyboard: inlineKeyboard };
 }
@@ -746,7 +745,7 @@ function buildSectionNavigation(sheetIndex: number, page: number, totalSections:
     inlineKeyboard.push(navigationButtons);
   }
 
-  inlineKeyboard.push([{ text: "📚 All sheets", callback_data: "menu:0" }]);
+  inlineKeyboard.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
 
   return { inline_keyboard: inlineKeyboard };
 }
@@ -763,7 +762,7 @@ function buildShiftingPlatformKeyboard(sheetIndex: number, sections: ShiftingSec
     );
   }
 
-  rows.push([{ text: "📚 All sheets", callback_data: "menu:0" }]);
+  rows.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
 
   return { inline_keyboard: rows };
 }
@@ -837,7 +836,7 @@ function buildShiftingShiftKeyboard(
 
   rows.push([
     { text: "🏢 Platforms", callback_data: `shiftplatforms:${sheetIndex}` },
-    { text: "📚 All sheets", callback_data: "menu:0" },
+    { text: "🏠 Dashboard", callback_data: "menu:0" },
   ]);
 
   return { inline_keyboard: rows };
@@ -1078,7 +1077,7 @@ async function buildSheetKeyboard() {
 
   return {
     inline_keyboard: sheets.map((sheet, index) => [{
-      text: `${getSheetBadge(sheet.title)} ${sheet.title}`,
+      text: sheet.title === "REAL TIME" ? "📊 REAL TIME BOARD" : "🔄 SHIFTING BOARD",
       callback_data: `sheet:${index}:0`,
     }]),
   };
@@ -1529,20 +1528,58 @@ async function renderRealTimeImage(preview: RealTimePreview) {
             key: "stamp",
             style: {
               display: "flex",
-              justifyContent: "center",
+              flexDirection: "column",
               alignItems: "center",
-              background: "linear-gradient(135deg, #3f725c 0%, #244536 100%)",
+              justifyContent: "center",
+              background: "linear-gradient(135deg, #1f4f46 0%, #244536 55%, #163225 100%)",
               color: "#ffffff",
-              padding: "18px 26px",
+              padding: "22px 26px 20px",
               border: "3px solid #244536",
               borderBottom: "0",
               borderRadius: "28px 28px 0 0",
-              fontSize: "52px",
-              fontWeight: 700,
-              letterSpacing: "1px",
+              boxShadow: "0 16px 30px rgba(15, 23, 42, 0.14)",
             },
           },
-          preview.timestamp,
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "18px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  color: "#d1fae5",
+                },
+              },
+              "Live Operations Board",
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "40px",
+                  fontWeight: 800,
+                  marginTop: "8px",
+                },
+              },
+              "REAL TIME",
+            ),
+            createElement(
+              "div",
+              {
+                key: "timestamp",
+                style: {
+                  marginTop: "12px",
+                  fontSize: "42px",
+                  fontWeight: 700,
+                  letterSpacing: "1px",
+                },
+              },
+              preview.timestamp,
+            ),
+          ],
         ),
         createElement(
           "div",
@@ -2147,7 +2184,10 @@ async function sendMenu(chatId: number, text?: string) {
     chat_id: chatId,
     text:
       text ??
-      "Choose a dashboard below. Only the two live staff dashboards are available: REAL TIME and SHIFTING.",
+      "WITHDRAW TEAM Dashboard
+Live Operations Center
+
+Choose one board to open.",
     reply_markup: replyMarkup,
   });
 }
@@ -2199,7 +2239,7 @@ async function showSheet(
       const preview = await getBasicsWithdrawPreview();
       imageBuffer = await renderBasicsWithdrawImage(preview);
       caption = buildBasicsCaption();
-      replyMarkup = { inline_keyboard: [[{ text: "📚 All sheets", callback_data: "menu:0" }]] };
+      replyMarkup = { inline_keyboard: [[{ text: "🏠 Dashboard", callback_data: "menu:0" }]] };
     } else if (sheet.title === "WORKFOLIO EMAIL") {
       const preview = await getWorkfolioEmailPreview(page);
       imageBuffer = await renderWorkfolioEmailImage(preview);
@@ -2257,7 +2297,7 @@ async function showSheet(
       chat_id: message.chat.id,
       text: `⚠️ ${sheet.title} is taking too long right now. Please tap it again in a moment.`,
       reply_markup: {
-        inline_keyboard: [[{ text: "📚 All sheets", callback_data: "menu:0" }]],
+        inline_keyboard: [[{ text: "🏠 Dashboard", callback_data: "menu:0" }]],
       },
     }).catch(() => undefined);
   } finally {
@@ -2341,7 +2381,10 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
 
     await sendMenu(
       chatId,
-      "Choose a dashboard below. Only the two live staff dashboards are available: REAL TIME and SHIFTING.",
+      "WITHDRAW TEAM Dashboard
+Live Operations Center
+
+Choose one board to open.",
     );
     return;
   }
