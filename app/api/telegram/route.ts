@@ -615,10 +615,19 @@ async function callTelegram(method: string, payload: Record<string, unknown>) {
     body: JSON.stringify(payload),
   });
 
+  const body = (await response.json()) as { ok?: boolean; result?: unknown; description?: string };
+
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram API ${method} failed: ${response.status} ${body}`);
+    throw new Error(
+      `Telegram API ${method} failed: ${response.status} ${body.description ?? "Unknown error"}`,
+    );
   }
+
+  if (body.ok === false) {
+    throw new Error(`Telegram API ${method} failed: ${body.description ?? "Unknown error"}`);
+  }
+
+  return body.result;
 }
 
 async function sendTelegramPhoto(
@@ -662,6 +671,35 @@ async function deleteTelegramMessage(chatId: number, messageId: number) {
     chat_id: chatId,
     message_id: messageId,
   });
+}
+
+async function sendStatusMessage(chatId: number, text: string) {
+  const result = (await callTelegram("sendMessage", {
+    chat_id: chatId,
+    text,
+    disable_notification: true,
+  })) as { message_id?: number } | undefined;
+
+  return result?.message_id;
+}
+
+function getLoadingMessage(sheetTitle: string) {
+  switch (sheetTitle) {
+    case "REAL TIME":
+      return "⏳ Loading REAL TIME dashboard...";
+    case "SHIFTING":
+      return "⏳ Loading SHIFTING dashboard...";
+    case "MAIN ALL ACCOUNTS":
+    case "MAIN USED ACCOUNTS":
+    case "SYSTEM ACCOUNTS":
+      return "⏳ Loading account dashboard...";
+    case "WORKFOLIO EMAIL":
+      return "⏳ Loading workfolio email directory...";
+    case "BASICS WITHDARW":
+      return "⏳ Loading basics guide...";
+    default:
+      return `⏳ Loading ${sheetTitle}...`;
+  }
 }
 
 async function buildSheetKeyboard() {
@@ -1717,59 +1755,67 @@ async function showSheet(
     return;
   }
 
-  let imageBuffer: ArrayBuffer;
-  let caption: string;
-  let replyMarkup: SheetNavigation;
+  await answerCallbackQuery(callbackQuery.id, "Loading...");
 
-  if (sheet.title === "REAL TIME") {
-    const safePage = Math.max(0, Math.min(page, REAL_TIME_SECTION_COUNT - 1));
+  const loadingMessageId = await sendStatusMessage(message.chat.id, getLoadingMessage(sheet.title));
 
-    if (safePage === 0) {
-      const preview = await getRealTimeSummaryPreview();
-      imageBuffer = await renderRealTimeImage(preview);
-      caption = buildRealTimeSummaryCaption(preview);
+  try {
+    let imageBuffer: ArrayBuffer;
+    let caption: string;
+    let replyMarkup: SheetNavigation;
+
+    if (sheet.title === "REAL TIME") {
+      const safePage = Math.max(0, Math.min(page, REAL_TIME_SECTION_COUNT - 1));
+
+      if (safePage === 0) {
+        const preview = await getRealTimeSummaryPreview();
+        imageBuffer = await renderRealTimeImage(preview);
+        caption = buildRealTimeSummaryCaption(preview);
+      } else {
+        const preview = await getRealTimeMatrixSection(safePage);
+        imageBuffer = await renderMatrixSectionImage(preview);
+        caption = buildRealTimeSectionCaption(preview);
+      }
+
+      replyMarkup = buildSectionNavigation(sheetIndex, safePage, REAL_TIME_SECTION_COUNT);
+    } else if (sheet.title === "BASICS WITHDARW") {
+      const preview = await getBasicsWithdrawPreview();
+      imageBuffer = await renderBasicsWithdrawImage(preview);
+      caption = buildBasicsCaption();
+      replyMarkup = { inline_keyboard: [[{ text: "📚 All sheets", callback_data: "menu:0" }]] };
+    } else if (sheet.title === "WORKFOLIO EMAIL") {
+      const preview = await getWorkfolioEmailPreview(page);
+      imageBuffer = await renderWorkfolioEmailImage(preview);
+      caption = buildWorkfolioEmailCaption(preview);
+      replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
+    } else if (sheet.title === "SHIFTING") {
+      const preview = await getShiftingPreview(page);
+      imageBuffer = await renderShiftingImage(preview);
+      caption = buildShiftingCaption(preview);
+      replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
     } else {
-      const preview = await getRealTimeMatrixSection(safePage);
-      imageBuffer = await renderMatrixSectionImage(preview);
-      caption = buildRealTimeSectionCaption(preview);
+      const config = getSheetWindowConfig(sheet.title);
+      const window = await readSheetWindow(sheet.title, page, config.rowsPerPage, config.columnsToShow);
+      imageBuffer = await renderGenericSheetImage(
+        sheet.title,
+        window.rowOffset,
+        sheet.rowCount,
+        window.rows,
+      );
+      caption = buildSheetCaption(sheet.title, window.rowOffset, sheet.rowCount, window.rows);
+      replyMarkup = buildSheetNavigation(sheetIndex, page, window.hasNextPage);
     }
 
-    replyMarkup = buildSectionNavigation(sheetIndex, safePage, REAL_TIME_SECTION_COUNT);
-  } else if (sheet.title === "BASICS WITHDARW") {
-    const preview = await getBasicsWithdrawPreview();
-    imageBuffer = await renderBasicsWithdrawImage(preview);
-    caption = buildBasicsCaption();
-    replyMarkup = { inline_keyboard: [[{ text: "📚 All sheets", callback_data: "menu:0" }]] };
-  } else if (sheet.title === "WORKFOLIO EMAIL") {
-    const preview = await getWorkfolioEmailPreview(page);
-    imageBuffer = await renderWorkfolioEmailImage(preview);
-    caption = buildWorkfolioEmailCaption(preview);
-    replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
-  } else if (sheet.title === "SHIFTING") {
-    const preview = await getShiftingPreview(page);
-    imageBuffer = await renderShiftingImage(preview);
-    caption = buildShiftingCaption(preview);
-    replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
-  } else {
-    const config = getSheetWindowConfig(sheet.title);
-    const window = await readSheetWindow(sheet.title, page, config.rowsPerPage, config.columnsToShow);
-    imageBuffer = await renderGenericSheetImage(
-      sheet.title,
-      window.rowOffset,
-      sheet.rowCount,
-      window.rows,
-    );
-    caption = buildSheetCaption(sheet.title, window.rowOffset, sheet.rowCount, window.rows);
-    replyMarkup = buildSheetNavigation(sheetIndex, page, window.hasNextPage);
+    if (message.photo && message.photo.length > 0) {
+      await deleteTelegramMessage(message.chat.id, message.message_id);
+    }
+
+    await sendTelegramPhoto(message.chat.id, imageBuffer, caption, replyMarkup);
+  } finally {
+    if (loadingMessageId) {
+      await deleteTelegramMessage(message.chat.id, loadingMessageId).catch(() => undefined);
+    }
   }
-
-  await answerCallbackQuery(callbackQuery.id);
-
-  if (message.photo && message.photo.length > 0) {
-    await deleteTelegramMessage(message.chat.id, message.message_id);
-  }
-
-  await sendTelegramPhoto(message.chat.id, imageBuffer, caption, replyMarkup);
 }
 
 async function handleMessage(message: TelegramMessage) {
@@ -1841,7 +1887,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
 
     await sendMenu(
       chatId,
-      "Choose a sheet below. The bot reads your private spreadsheet and shows it here in Telegram.",
+      "Choose a dashboard below. Professional staff view is live in read-only mode for staff and TLs.",
     );
     return;
   }
