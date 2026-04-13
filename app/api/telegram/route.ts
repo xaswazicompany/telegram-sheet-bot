@@ -1078,7 +1078,7 @@ async function buildSheetKeyboard() {
 
   return {
     inline_keyboard: sheets.map((sheet, index) => [{
-      text: sheet.title === "REAL TIME" ? "📊 REAL TIME COMMAND BOARD" : "🔄 SHIFTING COMMAND BOARD",
+      text: sheet.title === "REAL TIME" ? "📊 Real-Time Command Center" : "🔄 Shifting Command Center",
       callback_data: `sheet:${index}:0`,
     }]),
   };
@@ -1497,7 +1497,7 @@ async function renderWorkfolioEmailImage(preview: WorkfolioEmailPreview) {
 
 async function renderDashboardHomeImage() {
   const width = 1400;
-  const height = 920;
+  const height = 980;
 
   const image = new ImageResponse(
     createElement(
@@ -1526,10 +1526,10 @@ async function renderDashboardHomeImage() {
               alignItems: "center",
               justifyContent: "center",
               borderRadius: "34px",
-              padding: "48px 42px 40px",
-              background: "linear-gradient(135deg, #163225 0%, #1f4f46 42%, #1e3a5f 100%)",
-              boxShadow: "0 24px 60px rgba(2, 6, 23, 0.35)",
-              border: "1px solid rgba(255,255,255,0.10)",
+              padding: "54px 42px 44px",
+              background: "linear-gradient(135deg, #10251d 0%, #1f4f46 38%, #1e3a5f 100%)",
+              boxShadow: "0 30px 70px rgba(2, 6, 23, 0.42)",
+              border: "1px solid rgba(255,255,255,0.12)",
             },
           },
           [
@@ -1538,11 +1538,15 @@ async function renderDashboardHomeImage() {
               {
                 key: "eyebrow",
                 style: {
-                  fontSize: "20px",
-                  letterSpacing: "3px",
+                  fontSize: "18px",
+                  letterSpacing: "3.5px",
                   textTransform: "uppercase",
-                  color: "#bfdbfe",
+                  color: "#dbeafe",
                   textAlign: "center",
+                  padding: "10px 18px",
+                  borderRadius: "999px",
+                  background: "rgba(255,255,255,0.08)",
+                  border: "1px solid rgba(255,255,255,0.12)",
                 },
               },
               "Withdraw Team",
@@ -1552,13 +1556,13 @@ async function renderDashboardHomeImage() {
               {
                 key: "title",
                 style: {
-                  fontSize: "66px",
+                  fontSize: "70px",
                   fontWeight: 800,
-                  marginTop: "12px",
+                  marginTop: "16px",
                   textAlign: "center",
                 },
               },
-              "Live Operations Center",
+              "Executive Command Center",
             ),
             createElement(
               "div",
@@ -1567,13 +1571,74 @@ async function renderDashboardHomeImage() {
                 style: {
                   fontSize: "26px",
                   marginTop: "14px",
-                  color: "#e2e8f0",
+                  color: "#e5eefb",
                   textAlign: "center",
+                  maxWidth: "980px",
                 },
               },
-              "Real-time monitoring and shifting control for staff and team leaders.",
+              "Professional live monitoring for operations, platform staffing, and team leader control.",
             ),
           ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "mini-stats",
+            style: {
+              display: "flex",
+              gap: "18px",
+              marginTop: "22px",
+            },
+          },
+          [
+            { label: "Mode", value: "Read-Only" },
+            { label: "Boards", value: "2 Active" },
+            { label: "Focus", value: "Real Time + Shifting" },
+          ].map((item) =>
+            createElement(
+              "div",
+              {
+                key: item.label,
+                style: {
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  borderRadius: "24px",
+                  padding: "20px 22px",
+                  background: "rgba(255,255,255,0.07)",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  boxShadow: "0 18px 30px rgba(15, 23, 42, 0.18)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "18px",
+                      letterSpacing: "1px",
+                      textTransform: "uppercase",
+                      color: "#bfdbfe",
+                    },
+                  },
+                  item.label,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: "30px",
+                      fontWeight: 800,
+                      marginTop: "8px",
+                    },
+                  },
+                  item.value,
+                ),
+              ],
+            ),
+          ),
         ),
         createElement(
           "div",
@@ -1588,14 +1653,14 @@ async function renderDashboardHomeImage() {
           [
             {
               badge: "📊",
-              title: "REAL TIME BOARD",
-              subtitle: "Live platform counts, team leaders, daily shift codes, and operational metrics.",
+              title: "REAL-TIME COMMAND BOARD",
+              subtitle: "Live platform counts, team leaders, shift codes, and operational performance metrics.",
               accent: "linear-gradient(135deg, #0f766e 0%, #1e3a5f 100%)",
             },
             {
               badge: "🔄",
-              title: "SHIFTING BOARD",
-              subtitle: "Platform overview with Day, Mid, and Night staff assignment control.",
+              title: "SHIFTING COMMAND BOARD",
+              subtitle: "Platform overview with Day, Mid, and Night staffing control in one guided board.",
               accent: "linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%)",
             },
           ].map((card) =>
@@ -2353,8 +2418,8 @@ async function sendMenu(chatId: number, text?: string) {
     chatId,
     imageBuffer,
     text ?? "WITHDRAW TEAM
-Live Operations Center
-Open a command board to continue.",
+Executive Dashboard
+Select a live command center.",
     replyMarkup,
   );
 }
@@ -2549,9 +2614,9 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
     await sendMenu(
       chatId,
       "WITHDRAW TEAM Dashboard
-Live Operations Center
+Executive Dashboard
 
-Open a command board to continue.",
+Select a live command center.",
     );
     return;
   }
