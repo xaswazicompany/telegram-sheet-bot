@@ -599,7 +599,7 @@ async function getShiftingPreview(
       : shiftKind === "mid"
         ? currentSection.midEntries
         : currentSection.dayEntries;
-  const entriesPerPage = 4;
+  const entriesPerPage = 3;
   const totalEntryPages = Math.max(1, Math.ceil(entries.length / entriesPerPage));
   const safeEntryPage = Math.max(0, Math.min(entryPage, totalEntryPages - 1));
   const pagedEntries = entries.slice(
@@ -651,8 +651,9 @@ function buildShiftingCaption(preview: ShiftingPreview) {
       : preview.shiftKind === "mid"
         ? "🌇 Mid Shift"
         : "🌤️ Day Shift";
+  const visibleCount = preview.pagedEntries.length;
   const pageLabel = preview.totalEntryPages > 1 ? `
-Member Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "";
+Showing ${visibleCount} of ${preview.entries.length} · Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "";
 
   return `🔄 SHIFTING
 ${preview.currentSection.title}
@@ -2219,7 +2220,7 @@ async function renderShiftingImage(preview: ShiftingPreview) {
   const shiftAccent = preview.shiftKind === "night" ? "#1d4ed8" : preview.shiftKind === "mid" ? "#7c3aed" : "#0f766e";
   const shiftLabel = preview.shiftKind === "night" ? "Night Shift" : preview.shiftKind === "mid" ? "Mid Shift" : "Day Shift";
   const shiftBadge = preview.shiftKind === "night" ? "🌙" : preview.shiftKind === "mid" ? "🌇" : "🌤️";
-  const pageLabel = preview.totalEntryPages > 1 ? `Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : "Single page";
+  const pageLabel = preview.totalEntryPages > 1 ? `Showing ${preview.pagedEntries.length} of ${preview.entries.length} · Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : `Showing ${preview.pagedEntries.length} of ${preview.entries.length}`;
   const entryCount = Math.max(preview.pagedEntries.length, 1);
   const height = Math.max(980, 280 + entryCount * 156);
 
@@ -2296,7 +2297,7 @@ async function renderShiftingImage(preview: ShiftingPreview) {
                   textAlign: "center",
                 },
               },
-              `${shiftBadge} ${shiftLabel} • ${preview.entries.length} team members • ${pageLabel}`,
+              `${shiftBadge} ${shiftLabel} • ${pageLabel}`,
             ),
           ],
         ),
