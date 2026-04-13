@@ -157,6 +157,44 @@ function normalizeHeader(value: string) {
   return value;
 }
 
+function getSheetBadge(sheetTitle: string) {
+  const title = sheetTitle.toLowerCase();
+
+  if (title.includes("real time")) return "📊";
+  if (title.includes("shift")) return "🔄";
+  if (title.includes("account")) return "💳";
+  if (title.includes("attendance")) return "🕒";
+  if (title.includes("meeting")) return "📝";
+  if (title.includes("email")) return "📧";
+  if (title.includes("system")) return "🛠️";
+  if (title.includes("workfolio")) return "🗂️";
+  if (title.includes("april") || title.includes("march")) return "📅";
+  if (title.includes("withdraw")) return "💸";
+
+  return "📄";
+}
+
+function getSheetAccent(sheetTitle: string) {
+  const palette = [
+    "#2563eb",
+    "#059669",
+    "#7c3aed",
+    "#ea580c",
+    "#0f766e",
+    "#dc2626",
+    "#4338ca",
+    "#0891b2",
+  ];
+
+  let hash = 0;
+
+  for (const char of sheetTitle) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+
+  return palette[hash % palette.length];
+}
+
 function buildDisplayRows(rows: string[][], rowOffset: number) {
   const visibleRows = rows
     .map((row, index) => ({
@@ -529,10 +567,44 @@ async function renderGenericSheetImage(
   rowCount: number,
   rows: string[][],
 ) {
-  const displayRows = buildDisplayRows(rows, rowOffset);
-  const width = 1200;
-  const height = Math.max(720, 240 + displayRows.length * 88);
-  const lastVisibleRow = rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset;
+  const cleanedRows = rows.map((row) => row.map((cell) => cleanCell(cell || "")));
+  const visibleRows = cleanedRows.filter((row) => row.some((cell) => cell.length > 0));
+  const tableRows = visibleRows.length > 0 ? visibleRows : [["No data available"]];
+  const columnCount = Math.max(...tableRows.map((row) => row.length), 1);
+  const accent = getSheetAccent(sheetTitle);
+  const badge = getSheetBadge(sheetTitle);
+  const width = Math.min(1850, Math.max(1280, 320 + columnCount * 210));
+  const headerRows = rowOffset === 1 ? 1 : 0;
+  const bodyRowCount = Math.max(tableRows.length - headerRows, 0);
+  const height = Math.max(920, 250 + headerRows * 82 + bodyRowCount * 74);
+  const normalizedRows = tableRows.map((row) =>
+    Array.from({ length: columnCount }, (_, index) => row[index] ?? ""),
+  );
+
+  const measuredWidths = Array.from({ length: columnCount }, (_, columnIndex) => {
+    const longest = Math.max(
+      10,
+      ...normalizedRows.map((row) => Math.min((row[columnIndex] ?? "").length, 26)),
+    );
+
+    return longest;
+  });
+  const totalUnits = measuredWidths.reduce((sum, value) => sum + value, 0);
+  const usableWidth = width - 56;
+  const columnWidths = measuredWidths.map((value, index) => {
+    const computed = Math.floor((value / totalUnits) * usableWidth);
+    const minWidth = index === 0 ? 180 : 120;
+    return Math.max(minWidth, computed);
+  });
+
+  const adjustedColumnWidths = columnWidths.map((value, index) => {
+    if (index !== columnWidths.length - 1) {
+      return value;
+    }
+
+    const consumed = columnWidths.slice(0, -1).reduce((sum, widthValue) => sum + widthValue, 0);
+    return usableWidth - consumed;
+  });
 
   const image = new ImageResponse(
     createElement(
@@ -543,11 +615,11 @@ async function renderGenericSheetImage(
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          background: "linear-gradient(180deg, #101726 0%, #1a2436 100%)",
-          color: "#f8fafc",
-          padding: "42px",
-          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          background: "linear-gradient(180deg, #f8fafc 0%, #eff6ff 100%)",
+          color: "#111827",
+          fontFamily: "Georgia, serif",
           boxSizing: "border-box",
+          padding: "28px",
         },
       },
       [
@@ -558,110 +630,83 @@ async function renderGenericSheetImage(
             style: {
               display: "flex",
               flexDirection: "column",
-              marginBottom: "26px",
-              padding: "28px 32px",
-              borderRadius: "28px",
-              background: "rgba(15, 23, 42, 0.82)",
-              border: "1px solid rgba(148, 163, 184, 0.18)",
+              alignItems: "center",
+              justifyContent: "center",
+              background: `linear-gradient(135deg, ${accent} 0%, #1f2937 100%)`,
+              color: "#ffffff",
+              padding: "22px 28px",
+              borderRadius: "28px 28px 0 0",
+              border: `3px solid ${accent}`,
+              borderBottom: "0",
             },
           },
           [
             createElement(
               "div",
               {
-                key: "eyebrow",
-                style: {
-                  fontSize: "24px",
-                  letterSpacing: "2px",
-                  textTransform: "uppercase",
-                  color: "#f59e0b",
-                  marginBottom: "12px",
-                },
-              },
-              "Telegram Sheet View",
-            ),
-            createElement(
-              "div",
-              {
                 key: "title",
                 style: {
-                  fontSize: "48px",
+                  fontSize: "46px",
                   fontWeight: 700,
-                  marginBottom: "10px",
                 },
               },
-              sheetTitle,
+              `${badge} ${sheetTitle}`,
             ),
             createElement(
               "div",
               {
-                key: "meta",
+                key: "subtitle",
                 style: {
-                  fontSize: "24px",
-                  color: "#cbd5e1",
+                  fontSize: "22px",
+                  marginTop: "8px",
                 },
               },
-              `Rows ${rowOffset}-${lastVisibleRow} of ${rowCount}`,
+              `Rows ${rowOffset}-${rows.length > 0 ? rowOffset + rows.length - 1 : rowOffset} of ${rowCount}`,
             ),
           ],
         ),
-        createElement(
-          "div",
-          {
-            key: "rows",
-            style: {
-              display: "flex",
-              flexDirection: "column",
-              gap: "14px",
-            },
-          },
-          displayRows.map((row, index) =>
-            createElement(
-              "div",
-              {
-                key: `${row.rowLabel}-${index}`,
-                style: {
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "18px 22px",
-                  borderRadius: "22px",
-                  background: index % 2 === 0 ? "rgba(30, 41, 59, 0.92)" : "rgba(15, 23, 42, 0.92)",
-                  border: "1px solid rgba(148, 163, 184, 0.14)",
-                },
+        ...normalizedRows.map((row, rowIndex) =>
+          createElement(
+            "div",
+            {
+              key: `row-${rowIndex}`,
+              style: {
+                display: "flex",
+                background:
+                  rowIndex < headerRows
+                    ? accent
+                    : rowIndex % 2 === 0
+                      ? "#ffffff"
+                      : "#f7f8fc",
+                color: rowIndex < headerRows ? "#ffffff" : "#111827",
+                borderLeft: `3px solid ${accent}`,
+                borderRight: `3px solid ${accent}`,
+                borderBottom: "2px solid #cbd5e1",
               },
-              [
-                createElement(
-                  "div",
-                  {
-                    key: `label-${row.rowLabel}`,
-                    style: {
-                      minWidth: "74px",
-                      padding: "10px 14px",
-                      borderRadius: "14px",
-                      background: "rgba(245, 158, 11, 0.16)",
-                      color: "#fcd34d",
-                      fontSize: "26px",
-                      fontWeight: 700,
-                      textAlign: "center",
-                      marginRight: "18px",
-                    },
+            },
+            row.map((cell, columnIndex) =>
+              createElement(
+                "div",
+                {
+                  key: `cell-${rowIndex}-${columnIndex}`,
+                  style: {
+                    width: `${adjustedColumnWidths[columnIndex]}px`,
+                    padding: rowIndex < headerRows ? "14px 10px" : "12px 10px",
+                    borderRight: columnIndex === columnCount - 1 ? "0" : "2px solid #cbd5e1",
+                    textAlign: columnIndex === 0 ? "left" : "center",
+                    fontSize: rowIndex < headerRows ? "24px" : "22px",
+                    fontWeight: rowIndex < headerRows ? 700 : columnIndex === 0 ? 700 : 600,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    lineHeight: 1.15,
+                    minHeight: rowIndex < headerRows ? "64px" : "60px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: columnIndex === 0 ? "flex-start" : "center",
                   },
-                  row.rowLabel,
-                ),
-                createElement(
-                  "div",
-                  {
-                    key: `content-${row.rowLabel}`,
-                    style: {
-                      display: "flex",
-                      flex: 1,
-                      fontSize: "28px",
-                      color: "#e2e8f0",
-                    },
-                  },
-                  row.content,
-                ),
-              ],
+                },
+                cell || (rowIndex < headerRows ? `Col ${columnIndex + 1}` : "-"),
+              ),
             ),
           ),
         ),
