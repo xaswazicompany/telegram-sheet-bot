@@ -100,6 +100,42 @@ type ShiftingPreview = {
   pagedEntries: ShiftingEntry[];
 };
 
+type DailyTransactionMetric = {
+  label: string;
+  value: string;
+};
+
+type DailyTransactionEntry = {
+  shift: string;
+  name: string;
+  platform: string;
+  systemUser: string;
+  metrics: DailyTransactionMetric[];
+};
+
+type DailyTransactionPlatform = {
+  title: string;
+  entries: DailyTransactionEntry[];
+};
+
+type DailyTransactionSummary = {
+  totalPlatforms: number;
+  totalStaff: number;
+  dayCount: number;
+  midCount: number;
+  nightCount: number;
+};
+
+type DailyTransactionPreview = {
+  summary: DailyTransactionSummary;
+  headers: string[];
+  platforms: DailyTransactionPlatform[];
+  platformIndex: number;
+  currentPlatform: DailyTransactionPlatform;
+  staffIndex: number;
+  currentStaff: DailyTransactionEntry;
+};
+
 type BasicsStep = {
   title: string;
   subtitle: string;
@@ -134,7 +170,7 @@ type SheetNavigation = {
   inline_keyboard: InlineKeyboardButton[][];
 };
 
-const DASHBOARD_SHEET_TITLES = ["REAL TIME", "SHIFTING"] as const;
+const DASHBOARD_SHEET_TITLES = ["REAL TIME", "SHIFTING", "APRIL DAILY TRANSACTIONS"] as const;
 
 function getTelegramBotToken() {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
@@ -620,6 +656,128 @@ async function getShiftingPreview(
   };
 }
 
+function normalizeTransactionShift(shift: string) {
+  const normalized = shift.toLowerCase();
+
+  if (normalized.includes("中班") || normalized.includes("mid")) {
+    return "mid";
+  }
+
+  if (normalized.includes("夜班") || normalized.includes("night")) {
+    return "night";
+  }
+
+  return "day";
+}
+
+async function getDailyTransactionData() {
+  const rows = await readSheetRange("APRIL DAILY TRANSACTIONS", "A1:N260");
+  const headerRow =
+    rows.find((row) =>
+      row.slice(4, 14).filter((cell) => cleanCell(cell ?? "").length > 0).length >= 6,
+    ) ?? [];
+  const headers = Array.from({ length: 10 }, (_, index) => cleanCell(headerRow[index + 4] ?? `${index + 1}`) || `${index + 1}`);
+  const platformMap = new Map<string, DailyTransactionEntry[]>();
+  let dayCount = 0;
+  let midCount = 0;
+  let nightCount = 0;
+
+  for (const row of rows) {
+    const shift = cleanCell(row[0] ?? "");
+    const name = cleanCell(row[1] ?? "");
+    const platform = cleanCell(row[2] ?? "");
+    const systemUser = cleanCell(row[3] ?? "");
+
+    if (!name || !platform) {
+      continue;
+    }
+
+    if (
+      name.toUpperCase() === "WD NAME" ||
+      platform.toUpperCase() === "PLATFORM NAME" ||
+      systemUser.toUpperCase() === "SYSTEM USER"
+    ) {
+      continue;
+    }
+
+    const metrics = headers.map((label, index) => ({
+      label,
+      value: cleanCell(row[index + 4] ?? ""),
+    }));
+
+    if (metrics.every((metric) => metric.value.length === 0) && !systemUser) {
+      continue;
+    }
+
+    const entry: DailyTransactionEntry = {
+      shift,
+      name,
+      platform,
+      systemUser,
+      metrics,
+    };
+
+    const normalizedShift = normalizeTransactionShift(shift);
+
+    if (normalizedShift === "mid") {
+      midCount += 1;
+    } else if (normalizedShift === "night") {
+      nightCount += 1;
+    } else {
+      dayCount += 1;
+    }
+
+    const existing = platformMap.get(platform) ?? [];
+    existing.push(entry);
+    platformMap.set(platform, existing);
+  }
+
+  const platforms = Array.from(platformMap.entries()).map(([title, entries]) => ({
+    title,
+    entries,
+  }));
+
+  return {
+    headers,
+    platforms,
+    summary: {
+      totalPlatforms: platforms.length,
+      totalStaff: platforms.reduce((sum, platform) => sum + platform.entries.length, 0),
+      dayCount,
+      midCount,
+      nightCount,
+    },
+  };
+}
+
+async function getDailyTransactionPreview(
+  platformIndex: number,
+  staffIndex: number,
+): Promise<DailyTransactionPreview> {
+  const { headers, platforms, summary } = await getDailyTransactionData();
+  const safePlatformIndex = Math.max(0, Math.min(platformIndex, Math.max(platforms.length - 1, 0)));
+  const fallbackPlatform: DailyTransactionPlatform = { title: "APRIL DAILY TRANSACTIONS", entries: [] };
+  const currentPlatform = platforms[safePlatformIndex] ?? fallbackPlatform;
+  const safeStaffIndex = Math.max(0, Math.min(staffIndex, Math.max(currentPlatform.entries.length - 1, 0)));
+  const currentStaff = currentPlatform.entries[safeStaffIndex] ?? {
+    shift: "",
+    name: "No Staff Found",
+    platform: currentPlatform.title,
+    systemUser: "",
+    metrics: headers.map((label) => ({ label, value: "" })),
+  };
+
+  return {
+    summary,
+    headers,
+    platforms,
+    platformIndex: safePlatformIndex,
+    currentPlatform,
+    staffIndex: safeStaffIndex,
+    currentStaff,
+  };
+}
+
 function buildSheetCaption(sheetTitle: string, _rowOffset: number, _rowCount: number, _rows: string[][]) {
   return `${getSheetBadge(sheetTitle)} ${sheetTitle}`;
 }
@@ -658,6 +816,14 @@ Showing ${visibleCount} of ${preview.entries.length} · Page ${preview.entryPage
   return `🔄 SHIFTING COMMAND BOARD
 ${preview.currentSection.title}
 ${shiftLabel} · ${preview.entries.length} team member${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
+}
+
+function buildDailyTransactionCaption(preview: DailyTransactionPreview) {
+  const visibleMetrics = preview.currentStaff.metrics.filter((metric) => metric.value.length > 0).length;
+
+  return `💹 DAILY TRANSACTIONS COMMAND BOARD
+${preview.currentStaff.name}
+${preview.currentPlatform.title} · ${visibleMetrics} active day value${visibleMetrics === 1 ? "" : "s"}`;
 }
 
 function buildSheetNavigation(sheetIndex: number, page: number, totalPages: number, rowLabel?: string): SheetNavigation {
@@ -843,6 +1009,139 @@ function buildShiftingShiftKeyboard(
   return { inline_keyboard: rows };
 }
 
+function buildDailyTransactionPlatformKeyboard(
+  sheetIndex: number,
+  platforms: DailyTransactionPlatform[],
+): SheetNavigation {
+  const rows: InlineKeyboardButton[][] = [];
+
+  for (let index = 0; index < platforms.length; index += 2) {
+    rows.push(
+      platforms.slice(index, index + 2).map((platform, offset) => ({
+        text: `🏷️ ${shortenCell(platform.title, 18)}`,
+        callback_data: `txplatform:${sheetIndex}:${index + offset}:0`,
+      })),
+    );
+  }
+
+  rows.push([{ text: "🏠 Return To Dashboard", callback_data: "menu:0" }]);
+
+  return { inline_keyboard: rows };
+}
+
+function buildDailyTransactionStaffKeyboard(
+  sheetIndex: number,
+  platformIndex: number,
+  platforms: DailyTransactionPlatform[],
+  staffPage = 0,
+): SheetNavigation {
+  const rows: InlineKeyboardButton[][] = [];
+  const currentPlatform = platforms[platformIndex];
+
+  if (!currentPlatform) {
+    return { inline_keyboard: [[{ text: "🏠 Dashboard", callback_data: "menu:0" }]] };
+  }
+
+  const platformNav: InlineKeyboardButton[] = [];
+
+  if (platformIndex > 0) {
+    platformNav.push({
+      text: "◀ Previous",
+      callback_data: `txplatform:${sheetIndex}:${platformIndex - 1}:0`,
+    });
+  }
+
+  if (platformIndex + 1 < platforms.length) {
+    platformNav.push({
+      text: "Next ▶",
+      callback_data: `txplatform:${sheetIndex}:${platformIndex + 1}:0`,
+    });
+  }
+
+  if (platformNav.length > 0) {
+    rows.push(platformNav);
+  }
+
+  const perPage = 6;
+  const totalPages = Math.max(1, Math.ceil(currentPlatform.entries.length / perPage));
+  const safePage = Math.max(0, Math.min(staffPage, totalPages - 1));
+  const startIndex = safePage * perPage;
+  const visibleEntries = currentPlatform.entries.slice(startIndex, startIndex + perPage);
+
+  for (const [index, entry] of visibleEntries.entries()) {
+    rows.push([{
+      text: `👤 ${shortenCell(entry.name, 20)} · ${shortenCell(entry.systemUser || entry.platform, 12)}`,
+      callback_data: `txstaff:${sheetIndex}:${platformIndex}:${startIndex + index}`,
+    }]);
+  }
+
+  if (totalPages > 1) {
+    const pageNav: InlineKeyboardButton[] = [];
+
+    if (safePage > 0) {
+      pageNav.push({
+        text: "◀ Staff Page",
+        callback_data: `txplatform:${sheetIndex}:${platformIndex}:${safePage - 1}`,
+      });
+    }
+
+    if (safePage + 1 < totalPages) {
+      pageNav.push({
+        text: "Next Staff ▶",
+        callback_data: `txplatform:${sheetIndex}:${platformIndex}:${safePage + 1}`,
+      });
+    }
+
+    if (pageNav.length > 0) {
+      rows.push(pageNav);
+    }
+  }
+
+  rows.push([
+    { text: "🗂 Platform List", callback_data: `txplatforms:${sheetIndex}` },
+    { text: "🏠 Dashboard", callback_data: "menu:0" },
+  ]);
+
+  return { inline_keyboard: rows };
+}
+
+function buildDailyTransactionEntryKeyboard(
+  sheetIndex: number,
+  preview: DailyTransactionPreview,
+): SheetNavigation {
+  const rows: InlineKeyboardButton[][] = [];
+  const currentPlatform = preview.currentPlatform;
+  const totalStaff = currentPlatform.entries.length;
+  const staffNav: InlineKeyboardButton[] = [];
+
+  if (preview.staffIndex > 0) {
+    staffNav.push({
+      text: "◀ Previous Staff",
+      callback_data: `txstaff:${sheetIndex}:${preview.platformIndex}:${preview.staffIndex - 1}`,
+    });
+  }
+
+  if (preview.staffIndex + 1 < totalStaff) {
+    staffNav.push({
+      text: "Next Staff ▶",
+      callback_data: `txstaff:${sheetIndex}:${preview.platformIndex}:${preview.staffIndex + 1}`,
+    });
+  }
+
+  if (staffNav.length > 0) {
+    rows.push(staffNav);
+  }
+
+  rows.push([
+    { text: "👥 Staff List", callback_data: `txplatform:${sheetIndex}:${preview.platformIndex}:0` },
+    { text: "🗂 Platform List", callback_data: `txplatforms:${sheetIndex}` },
+  ]);
+
+  rows.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
+
+  return { inline_keyboard: rows };
+}
+
 async function sendKeyboardMessage(chatId: number, text: string, replyMarkup: SheetNavigation) {
   await callTelegram("sendMessage", {
     chat_id: chatId,
@@ -968,6 +1267,118 @@ async function showShiftingView(
   }
 }
 
+async function showDailyTransactionPlatformMenu(
+  callbackQuery: TelegramCallbackQuery,
+  sheetIndex: number,
+) {
+  const message = callbackQuery.message;
+
+  if (!message) {
+    await answerCallbackQuery(callbackQuery.id, "Missing message context.");
+    return;
+  }
+
+  const { summary, platforms } = await getDailyTransactionData();
+  await answerCallbackQuery(callbackQuery.id, "Loading...");
+  const loadingMessageId = await sendStatusMessage(
+    message.chat.id,
+    "⏳ Loading daily transactions overview...",
+  );
+
+  try {
+    const imageBuffer = await renderDailyTransactionOverviewImage(summary);
+    await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
+    await sendTelegramPhoto(
+      message.chat.id,
+      imageBuffer,
+      `💹 DAILY TRANSACTIONS COMMAND CENTER
+Choose a platform to continue
+${platforms.length} platform${platforms.length === 1 ? "" : "s"} ready`,
+      buildDailyTransactionPlatformKeyboard(sheetIndex, platforms),
+    );
+  } finally {
+    if (loadingMessageId) {
+      await deleteTelegramMessage(message.chat.id, loadingMessageId).catch(() => undefined);
+    }
+  }
+}
+
+async function showDailyTransactionStaffMenu(
+  callbackQuery: TelegramCallbackQuery,
+  sheetIndex: number,
+  platformIndex: number,
+  staffPage = 0,
+) {
+  const message = callbackQuery.message;
+
+  if (!message) {
+    await answerCallbackQuery(callbackQuery.id, "Missing message context.");
+    return;
+  }
+
+  const { platforms } = await getDailyTransactionData();
+  const safePlatformIndex = Math.max(0, Math.min(platformIndex, Math.max(platforms.length - 1, 0)));
+  const currentPlatform = platforms[safePlatformIndex];
+
+  if (!currentPlatform) {
+    await answerCallbackQuery(callbackQuery.id, "Platform not found.");
+    return;
+  }
+
+  await answerCallbackQuery(callbackQuery.id);
+  await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
+
+  const perPage = 6;
+  const totalPages = Math.max(1, Math.ceil(currentPlatform.entries.length / perPage));
+  const safePage = Math.max(0, Math.min(staffPage, totalPages - 1));
+  const startIndex = safePage * perPage + 1;
+  const endIndex = Math.min(currentPlatform.entries.length, safePage * perPage + perPage);
+
+  await sendKeyboardMessage(
+    message.chat.id,
+    `💹 DAILY TRANSACTIONS
+${currentPlatform.title}
+Choose a staff profile (${startIndex}-${endIndex} of ${currentPlatform.entries.length}).`,
+    buildDailyTransactionStaffKeyboard(sheetIndex, safePlatformIndex, platforms, safePage),
+  );
+}
+
+async function showDailyTransactionEntry(
+  callbackQuery: TelegramCallbackQuery,
+  sheetIndex: number,
+  platformIndex: number,
+  staffIndex: number,
+) {
+  const message = callbackQuery.message;
+
+  if (!message) {
+    await answerCallbackQuery(callbackQuery.id, "The original message is no longer available.");
+    return;
+  }
+
+  const preview = await getDailyTransactionPreview(platformIndex, staffIndex);
+  await answerCallbackQuery(callbackQuery.id, "Loading...");
+  const loadingMessageId = await sendStatusMessage(
+    message.chat.id,
+    `⏳ Loading ${preview.currentStaff.name} transactions...`,
+  );
+
+  try {
+    const imageBuffer = await renderDailyTransactionEntryImage(preview);
+    await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
+    await sendTelegramPhoto(
+      message.chat.id,
+      imageBuffer,
+      buildDailyTransactionCaption(preview),
+      buildDailyTransactionEntryKeyboard(sheetIndex, preview),
+    );
+  } finally {
+    if (loadingMessageId) {
+      await deleteTelegramMessage(message.chat.id, loadingMessageId).catch(() => undefined);
+    }
+  }
+}
+
 async function callTelegram(method: string, payload: Record<string, unknown>) {
   const token = getTelegramBotToken();
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -1052,6 +1463,8 @@ function getLoadingMessage(sheetTitle: string) {
       return "⏳ Loading REAL TIME dashboard...";
     case "SHIFTING":
       return "⏳ Loading SHIFTING dashboard...";
+    case "APRIL DAILY TRANSACTIONS":
+      return "⏳ Loading daily transactions board...";
     case "MAIN ALL ACCOUNTS":
     case "MAIN USED ACCOUNTS":
     case "SYSTEM ACCOUNTS":
@@ -1078,7 +1491,12 @@ async function buildSheetKeyboard() {
 
   return {
     inline_keyboard: sheets.map((sheet, index) => [{
-      text: sheet.title === "REAL TIME" ? "📊 Real-Time Command Center" : "🔄 Shifting Command Center",
+      text:
+        sheet.title === "REAL TIME"
+          ? "📊 Real-Time Command Center"
+          : sheet.title === "SHIFTING"
+            ? "🔄 Shifting Command Center"
+            : "💹 Daily Transactions Center",
       callback_data: `sheet:${index}:0`,
     }]),
   };
@@ -1497,7 +1915,7 @@ async function renderWorkfolioEmailImage(preview: WorkfolioEmailPreview) {
 
 async function renderDashboardHomeImage() {
   const width = 1400;
-  const height = 980;
+  const height = 1120;
 
   const image = new ImageResponse(
     createElement(
@@ -1592,8 +2010,8 @@ async function renderDashboardHomeImage() {
           },
           [
             { label: "Mode", value: "Read-Only" },
-            { label: "Boards", value: "2 Active" },
-            { label: "Focus", value: "Real Time + Shifting" },
+            { label: "Boards", value: "3 Active" },
+            { label: "Focus", value: "Operations + Shifting + Transactions" },
           ].map((item) =>
             createElement(
               "div",
@@ -1662,6 +2080,12 @@ async function renderDashboardHomeImage() {
               title: "SHIFTING COMMAND BOARD",
               subtitle: "Platform overview with Day, Mid, and Night staffing control in one guided board.",
               accent: "linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%)",
+            },
+            {
+              badge: "💹",
+              title: "DAILY TRANSACTIONS BOARD",
+              subtitle: "Choose a platform, open a staff profile, and review each user transaction line clearly.",
+              accent: "linear-gradient(135deg, #14532d 0%, #0f766e 45%, #1e3a5f 100%)",
             },
           ].map((card) =>
             createElement(
@@ -2410,6 +2834,371 @@ async function renderShiftingImage(preview: ShiftingPreview) {
   return image.arrayBuffer();
 }
 
+async function renderDailyTransactionOverviewImage(summary: DailyTransactionSummary) {
+  const width = 1400;
+  const height = 920;
+  const cards = [
+    { label: "Platforms", value: String(summary.totalPlatforms), accent: "#1d4ed8" },
+    { label: "Staff Profiles", value: String(summary.totalStaff), accent: "#0f766e" },
+    { label: "Day Shift", value: String(summary.dayCount), accent: "#ea580c" },
+    { label: "Mid Shift", value: String(summary.midCount), accent: "#7c3aed" },
+    { label: "Night Shift", value: String(summary.nightCount), accent: "#1e40af" },
+  ];
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #edf6ff 0%, #e8f3ee 100%)",
+          color: "#0f172a",
+          padding: "34px",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "linear-gradient(135deg, #14532d 0%, #1f4f46 45%, #1e3a5f 100%)",
+              color: "#ffffff",
+              borderRadius: "30px",
+              padding: "34px 38px",
+              marginBottom: "28px",
+              boxShadow: "0 18px 36px rgba(15, 23, 42, 0.18)",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "22px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  color: "#d1fae5",
+                },
+              },
+              "Daily Transactions Board",
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "54px",
+                  fontWeight: 800,
+                  marginTop: "10px",
+                  textAlign: "center",
+                },
+              },
+              "APRIL DAILY TRANSACTIONS",
+            ),
+            createElement(
+              "div",
+              {
+                key: "subtitle",
+                style: {
+                  fontSize: "26px",
+                  color: "#dbeafe",
+                  marginTop: "10px",
+                  textAlign: "center",
+                },
+              },
+              "Choose a platform, then open a staff profile to review transaction activity.",
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "cards",
+            style: {
+              display: "flex",
+              gap: "16px",
+              flexWrap: "wrap",
+              justifyContent: "center",
+            },
+          },
+          cards.map((card) =>
+            createElement(
+              "div",
+              {
+                key: card.label,
+                style: {
+                  width: "240px",
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: "20px 22px",
+                  borderRadius: "22px",
+                  background: "#ffffff",
+                  borderTop: `6px solid ${card.accent}`,
+                  boxShadow: "0 12px 28px rgba(15, 23, 42, 0.10)",
+                  alignItems: "center",
+                  justifyContent: "center",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "22px",
+                      color: "#475569",
+                      textAlign: "center",
+                    },
+                  },
+                  card.label,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: "46px",
+                      fontWeight: 800,
+                      marginTop: "10px",
+                    },
+                  },
+                  card.value,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+    { width, height },
+  );
+
+  return image.arrayBuffer();
+}
+
+async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview) {
+  const activeMetrics = preview.currentStaff.metrics.filter((metric) => metric.value.length > 0);
+  const metrics = activeMetrics.length > 0 ? activeMetrics : preview.currentStaff.metrics;
+  const width = 1400;
+  const height = Math.max(980, 420 + metrics.length * 92);
+  const shiftAccent =
+    normalizeTransactionShift(preview.currentStaff.shift) === "night"
+      ? "#1d4ed8"
+      : normalizeTransactionShift(preview.currentStaff.shift) === "mid"
+        ? "#7c3aed"
+        : "#0f766e";
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #eef6f4 0%, #e2ecf6 100%)",
+          color: "#0f172a",
+          padding: "34px",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: `linear-gradient(135deg, ${shiftAccent} 0%, #1f4f46 100%)`,
+              color: "#ffffff",
+              borderRadius: "30px",
+              padding: "30px 34px",
+              marginBottom: "24px",
+              boxShadow: "0 18px 36px rgba(15, 23, 42, 0.18)",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "20px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  color: "#dbeafe",
+                },
+              },
+              "Daily Transactions Profile",
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "48px",
+                  fontWeight: 800,
+                  marginTop: "12px",
+                  textAlign: "center",
+                },
+              },
+              preview.currentStaff.name,
+            ),
+            createElement(
+              "div",
+              {
+                key: "subtitle",
+                style: {
+                  fontSize: "24px",
+                  color: "#e2e8f0",
+                  marginTop: "10px",
+                  textAlign: "center",
+                },
+              },
+              `${preview.currentPlatform.title} · ${preview.currentStaff.shift || "Shift not set"}`,
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "meta",
+            style: {
+              display: "flex",
+              gap: "18px",
+              justifyContent: "center",
+              marginBottom: "20px",
+            },
+          },
+          [
+            { label: "System User", value: preview.currentStaff.systemUser || "-" },
+            { label: "Platform", value: preview.currentStaff.platform || "-" },
+          ].map((item) =>
+            createElement(
+              "div",
+              {
+                key: item.label,
+                style: {
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: "18px 22px",
+                  borderRadius: "22px",
+                  background: "#ffffff",
+                  boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
+                  maxWidth: "620px",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "18px",
+                      textTransform: "uppercase",
+                      letterSpacing: "1px",
+                      color: "#64748b",
+                    },
+                  },
+                  item.label,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: "30px",
+                      fontWeight: 800,
+                      marginTop: "8px",
+                      color: "#0f172a",
+                    },
+                  },
+                  item.value,
+                ),
+              ],
+            ),
+          ),
+        ),
+        createElement(
+          "div",
+          {
+            key: "metrics",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+            },
+          },
+          metrics.map((metric) =>
+            createElement(
+              "div",
+              {
+                key: metric.label,
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "20px 24px",
+                  borderRadius: "22px",
+                  background: "#ffffff",
+                  border: `2px solid ${shiftAccent}`,
+                  boxShadow: "0 10px 24px rgba(15, 23, 42, 0.08)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "26px",
+                      fontWeight: 700,
+                      color: "#1e293b",
+                    },
+                  },
+                  `Day ${metric.label}`,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: "34px",
+                      fontWeight: 800,
+                      color: metric.value === "RD" || metric.value === "ABS" ? "#b91c1c" : "#0f172a",
+                    },
+                  },
+                  metric.value || "-",
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+    { width, height },
+  );
+
+  return image.arrayBuffer();
+}
+
 async function sendMenu(chatId: number, text?: string) {
   const replyMarkup = await buildSheetKeyboard();
   const imageBuffer = await renderDashboardHomeImage();
@@ -2417,9 +3206,9 @@ async function sendMenu(chatId: number, text?: string) {
   await sendTelegramPhoto(
     chatId,
     imageBuffer,
-    text ?? "WITHDRAW TEAM
+    text ?? `WITHDRAW TEAM
 Executive Dashboard
-Select a live command center.",
+Select a live command center.`,
     replyMarkup,
   );
 }
@@ -2564,7 +3353,7 @@ async function handleMessage(message: TelegramMessage) {
 /help - show commands
 /chatid - show this chat ID
 
-This bot is read-only and now focused on REAL TIME and SHIFTING only.`,
+This bot is read-only and now focused on REAL TIME, SHIFTING, and DAILY TRANSACTIONS.`,
     });
     return;
   }
@@ -2613,11 +3402,54 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
 
     await sendMenu(
       chatId,
-      "WITHDRAW TEAM Dashboard
+      `WITHDRAW TEAM Dashboard
 Executive Dashboard
 
-Select a live command center.",
+Select a live command center.`,
     );
+    return;
+  }
+
+  if (data.startsWith("txplatforms:")) {
+    const [, sheetIndexValue] = data.split(":");
+    const sheetIndex = Number(sheetIndexValue);
+
+    if (Number.isNaN(sheetIndex)) {
+      await answerCallbackQuery(callbackQuery.id, "Invalid transactions request.");
+      return;
+    }
+
+    await showDailyTransactionPlatformMenu(callbackQuery, sheetIndex);
+    return;
+  }
+
+  if (data.startsWith("txplatform:")) {
+    const [, sheetIndexValue, platformIndexValue, staffPageValue] = data.split(":");
+    const sheetIndex = Number(sheetIndexValue);
+    const platformIndex = Number(platformIndexValue);
+    const staffPage = Number(staffPageValue ?? "0");
+
+    if (Number.isNaN(sheetIndex) || Number.isNaN(platformIndex) || Number.isNaN(staffPage)) {
+      await answerCallbackQuery(callbackQuery.id, "Invalid platform request.");
+      return;
+    }
+
+    await showDailyTransactionStaffMenu(callbackQuery, sheetIndex, platformIndex, staffPage);
+    return;
+  }
+
+  if (data.startsWith("txstaff:")) {
+    const [, sheetIndexValue, platformIndexValue, staffIndexValue] = data.split(":");
+    const sheetIndex = Number(sheetIndexValue);
+    const platformIndex = Number(platformIndexValue);
+    const staffIndex = Number(staffIndexValue);
+
+    if (Number.isNaN(sheetIndex) || Number.isNaN(platformIndex) || Number.isNaN(staffIndex)) {
+      await answerCallbackQuery(callbackQuery.id, "Invalid staff request.");
+      return;
+    }
+
+    await showDailyTransactionEntry(callbackQuery, sheetIndex, platformIndex, staffIndex);
     return;
   }
 
@@ -2683,6 +3515,11 @@ Select a live command center.",
 
     if (sheet?.title === "SHIFTING") {
       await showShiftingPlatformMenu(callbackQuery, sheetIndex);
+      return;
+    }
+
+    if (sheet?.title === "APRIL DAILY TRANSACTIONS") {
+      await showDailyTransactionPlatformMenu(callbackQuery, sheetIndex);
       return;
     }
 
