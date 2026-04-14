@@ -820,10 +820,16 @@ ${shiftLabel} · ${preview.entries.length} team member${preview.entries.length =
 
 function buildDailyTransactionCaption(preview: DailyTransactionPreview) {
   const visibleMetrics = preview.currentStaff.metrics.filter((metric) => metric.value.length > 0).length;
+  const shiftLabel =
+    normalizeTransactionShift(preview.currentStaff.shift) === "night"
+      ? "🌙 Night Shift"
+      : normalizeTransactionShift(preview.currentStaff.shift) === "mid"
+        ? "🌇 Mid Shift"
+        : "🌤️ Day Shift";
 
   return `💹 DAILY TRANSACTIONS COMMAND BOARD
 ${preview.currentStaff.name}
-${preview.currentPlatform.title} · ${visibleMetrics} active day value${visibleMetrics === 1 ? "" : "s"}`;
+${preview.currentPlatform.title} · ${shiftLabel} · ${visibleMetrics} active day value${visibleMetrics === 1 ? "" : "s"}`;
 }
 
 function buildSheetNavigation(sheetIndex: number, page: number, totalPages: number, rowLabel?: string): SheetNavigation {
@@ -2991,13 +2997,27 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
   const activeMetrics = preview.currentStaff.metrics.filter((metric) => metric.value.length > 0);
   const metrics = activeMetrics.length > 0 ? activeMetrics : preview.currentStaff.metrics;
   const width = 1400;
-  const height = Math.max(980, 420 + metrics.length * 92);
+  const normalizedShift = normalizeTransactionShift(preview.currentStaff.shift);
+  const height = Math.max(1060, 560 + metrics.length * 92);
   const shiftAccent =
-    normalizeTransactionShift(preview.currentStaff.shift) === "night"
+    normalizedShift === "night"
       ? "#1d4ed8"
-      : normalizeTransactionShift(preview.currentStaff.shift) === "mid"
+      : normalizedShift === "mid"
         ? "#7c3aed"
         : "#0f766e";
+  const shiftLabel =
+    normalizedShift === "night"
+      ? "🌙 Night Shift / 夜班"
+      : normalizedShift === "mid"
+        ? "🌇 Mid Shift / 中班"
+        : "🌤️ Day Shift / 白班";
+  const rdCount = metrics.filter((metric) => metric.value.toUpperCase() === "RD").length;
+  const absCount = metrics.filter((metric) => metric.value.toUpperCase() === "ABS").length;
+  const numericValues = metrics
+    .map((metric) => Number(metric.value.replace(/,/g, "")))
+    .filter((value) => Number.isFinite(value));
+  const peakValue = numericValues.length > 0 ? Math.max(...numericValues) : 0;
+  const totalValue = numericValues.reduce((sum, value) => sum + value, 0);
 
   const image = new ImageResponse(
     createElement(
@@ -3071,9 +3091,77 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                   textAlign: "center",
                 },
               },
-              `${preview.currentPlatform.title} · ${preview.currentStaff.shift || "Shift not set"}`,
+              `${preview.currentPlatform.title} · ${shiftLabel}`,
             ),
           ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "summary-cards",
+            style: {
+              display: "flex",
+              gap: "18px",
+              justifyContent: "center",
+              marginBottom: "20px",
+            },
+          },
+          [
+            { label: "Active Days", value: String(activeMetrics.length || metrics.length), accent: "#0f766e" },
+            { label: "RD", value: String(rdCount), accent: "#ea580c" },
+            { label: "ABS", value: String(absCount), accent: "#dc2626" },
+            { label: "Peak Value", value: peakValue > 0 ? peakValue.toLocaleString("en-US") : "-", accent: shiftAccent },
+            { label: "Total Value", value: totalValue > 0 ? totalValue.toLocaleString("en-US") : "-", accent: "#1e3a5f" },
+          ].map((item) =>
+            createElement(
+              "div",
+              {
+                key: item.label,
+                style: {
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "18px 16px",
+                  borderRadius: "22px",
+                  background: "#ffffff",
+                  borderTop: `6px solid ${item.accent}`,
+                  boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "16px",
+                      textTransform: "uppercase",
+                      letterSpacing: "1px",
+                      color: "#64748b",
+                      textAlign: "center",
+                    },
+                  },
+                  item.label,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: "28px",
+                      fontWeight: 800,
+                      color: "#0f172a",
+                      marginTop: "8px",
+                      textAlign: "center",
+                    },
+                  },
+                  item.value,
+                ),
+              ],
+            ),
+          ),
         ),
         createElement(
           "div",
@@ -3128,6 +3216,7 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                       fontWeight: 800,
                       marginTop: "8px",
                       color: "#0f172a",
+                      wordBreak: "break-word",
                     },
                   },
                   item.value,
@@ -3157,8 +3246,18 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                   justifyContent: "space-between",
                   padding: "20px 24px",
                   borderRadius: "22px",
-                  background: "#ffffff",
-                  border: `2px solid ${shiftAccent}`,
+                  background:
+                    metric.value.toUpperCase() === "RD"
+                      ? "linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)"
+                      : metric.value.toUpperCase() === "ABS"
+                        ? "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)"
+                        : "#ffffff",
+                  border:
+                    metric.value.toUpperCase() === "RD"
+                      ? "2px solid #f97316"
+                      : metric.value.toUpperCase() === "ABS"
+                        ? "2px solid #ef4444"
+                        : `2px solid ${shiftAccent}`,
                   boxShadow: "0 10px 24px rgba(15, 23, 42, 0.08)",
                 },
               },
@@ -3182,7 +3281,12 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                     style: {
                       fontSize: "34px",
                       fontWeight: 800,
-                      color: metric.value === "RD" || metric.value === "ABS" ? "#b91c1c" : "#0f172a",
+                      color:
+                        metric.value.toUpperCase() === "RD"
+                          ? "#c2410c"
+                          : metric.value.toUpperCase() === "ABS"
+                            ? "#b91c1c"
+                            : "#0f172a",
                     },
                   },
                   metric.value || "-",
