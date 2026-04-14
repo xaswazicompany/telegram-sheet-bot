@@ -132,8 +132,11 @@ type DailyTransactionPreview = {
   platforms: DailyTransactionPlatform[];
   platformIndex: number;
   currentPlatform: DailyTransactionPlatform;
-  staffIndex: number;
-  currentStaff: DailyTransactionEntry;
+  shiftKind: ShiftingShiftKind;
+  entries: DailyTransactionEntry[];
+  entryPage: number;
+  totalEntryPages: number;
+  pagedEntries: DailyTransactionEntry[];
 };
 
 type BasicsStep = {
@@ -752,20 +755,21 @@ async function getDailyTransactionData() {
 
 async function getDailyTransactionPreview(
   platformIndex: number,
-  staffIndex: number,
+  shiftKind: ShiftingShiftKind,
+  entryPage = 0,
 ): Promise<DailyTransactionPreview> {
   const { headers, platforms, summary } = await getDailyTransactionData();
   const safePlatformIndex = Math.max(0, Math.min(platformIndex, Math.max(platforms.length - 1, 0)));
   const fallbackPlatform: DailyTransactionPlatform = { title: "APRIL DAILY TRANSACTIONS", entries: [] };
   const currentPlatform = platforms[safePlatformIndex] ?? fallbackPlatform;
-  const safeStaffIndex = Math.max(0, Math.min(staffIndex, Math.max(currentPlatform.entries.length - 1, 0)));
-  const currentStaff = currentPlatform.entries[safeStaffIndex] ?? {
-    shift: "",
-    name: "No Staff Found",
-    platform: currentPlatform.title,
-    systemUser: "",
-    metrics: headers.map((label) => ({ label, value: "" })),
-  };
+  const entries = currentPlatform.entries.filter((entry) => normalizeTransactionShift(entry.shift) === shiftKind);
+  const entriesPerPage = 3;
+  const totalEntryPages = Math.max(1, Math.ceil(entries.length / entriesPerPage));
+  const safeEntryPage = Math.max(0, Math.min(entryPage, totalEntryPages - 1));
+  const pagedEntries = entries.slice(
+    safeEntryPage * entriesPerPage,
+    safeEntryPage * entriesPerPage + entriesPerPage,
+  );
 
   return {
     summary,
@@ -773,8 +777,11 @@ async function getDailyTransactionPreview(
     platforms,
     platformIndex: safePlatformIndex,
     currentPlatform,
-    staffIndex: safeStaffIndex,
-    currentStaff,
+    shiftKind,
+    entries,
+    entryPage: safeEntryPage,
+    totalEntryPages,
+    pagedEntries,
   };
 }
 
@@ -819,17 +826,19 @@ ${shiftLabel} · ${preview.entries.length} team member${preview.entries.length =
 }
 
 function buildDailyTransactionCaption(preview: DailyTransactionPreview) {
-  const visibleMetrics = preview.currentStaff.metrics.filter((metric) => metric.value.length > 0).length;
   const shiftLabel =
-    normalizeTransactionShift(preview.currentStaff.shift) === "night"
+    preview.shiftKind === "night"
       ? "🌙 Night Shift"
-      : normalizeTransactionShift(preview.currentStaff.shift) === "mid"
+      : preview.shiftKind === "mid"
         ? "🌇 Mid Shift"
         : "🌤️ Day Shift";
+  const pageLabel = preview.totalEntryPages > 1
+    ? `\nShowing ${preview.pagedEntries.length} of ${preview.entries.length} · Page ${preview.entryPage + 1} of ${preview.totalEntryPages}`
+    : "";
 
   return `💹 DAILY TRANSACTIONS COMMAND BOARD
-${preview.currentStaff.name}
-${preview.currentPlatform.title} · ${shiftLabel} · ${visibleMetrics} active day value${visibleMetrics === 1 ? "" : "s"}`;
+${preview.currentPlatform.title}
+${shiftLabel} · ${preview.entries.length} staff transaction profile${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
 }
 
 function buildSheetNavigation(sheetIndex: number, page: number, totalPages: number, rowLabel?: string): SheetNavigation {
@@ -1035,11 +1044,12 @@ function buildDailyTransactionPlatformKeyboard(
   return { inline_keyboard: rows };
 }
 
-function buildDailyTransactionStaffKeyboard(
+function buildDailyTransactionShiftKeyboard(
   sheetIndex: number,
   platformIndex: number,
   platforms: DailyTransactionPlatform[],
-  staffPage = 0,
+  shiftKind: ShiftingShiftKind,
+  entryPage = 0,
 ): SheetNavigation {
   const rows: InlineKeyboardButton[][] = [];
   const currentPlatform = platforms[platformIndex];
@@ -1053,14 +1063,14 @@ function buildDailyTransactionStaffKeyboard(
   if (platformIndex > 0) {
     platformNav.push({
       text: "◀ Previous",
-      callback_data: `txplatform:${sheetIndex}:${platformIndex - 1}:0`,
+      callback_data: `txview:${sheetIndex}:${platformIndex - 1}:${shiftKind}:0`,
     });
   }
 
   if (platformIndex + 1 < platforms.length) {
     platformNav.push({
       text: "Next ▶",
-      callback_data: `txplatform:${sheetIndex}:${platformIndex + 1}:0`,
+      callback_data: `txview:${sheetIndex}:${platformIndex + 1}:${shiftKind}:0`,
     });
   }
 
@@ -1068,33 +1078,25 @@ function buildDailyTransactionStaffKeyboard(
     rows.push(platformNav);
   }
 
-  const perPage = 6;
-  const totalPages = Math.max(1, Math.ceil(currentPlatform.entries.length / perPage));
-  const safePage = Math.max(0, Math.min(staffPage, totalPages - 1));
-  const startIndex = safePage * perPage;
-  const visibleEntries = currentPlatform.entries.slice(startIndex, startIndex + perPage);
-
-  for (const [index, entry] of visibleEntries.entries()) {
-    rows.push([{
-      text: `👤 ${shortenCell(entry.name, 20)} · ${shortenCell(entry.systemUser || entry.platform, 12)}`,
-      callback_data: `txstaff:${sheetIndex}:${platformIndex}:${startIndex + index}`,
-    }]);
-  }
+  const filteredEntries = currentPlatform.entries.filter((entry) => normalizeTransactionShift(entry.shift) === shiftKind);
+  const perPage = 3;
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / perPage));
+  const safePage = Math.max(0, Math.min(entryPage, totalPages - 1));
 
   if (totalPages > 1) {
     const pageNav: InlineKeyboardButton[] = [];
 
     if (safePage > 0) {
       pageNav.push({
-        text: "◀ Staff Page",
-        callback_data: `txplatform:${sheetIndex}:${platformIndex}:${safePage - 1}`,
+        text: "◀ Previous Page",
+        callback_data: `txview:${sheetIndex}:${platformIndex}:${shiftKind}:${safePage - 1}`,
       });
     }
 
     if (safePage + 1 < totalPages) {
       pageNav.push({
-        text: "Next Staff ▶",
-        callback_data: `txplatform:${sheetIndex}:${platformIndex}:${safePage + 1}`,
+        text: "Next Page ▶",
+        callback_data: `txview:${sheetIndex}:${platformIndex}:${shiftKind}:${safePage + 1}`,
       });
     }
 
@@ -1104,46 +1106,24 @@ function buildDailyTransactionStaffKeyboard(
   }
 
   rows.push([
+    {
+      text: `🌤️ Day (${currentPlatform.entries.filter((entry) => normalizeTransactionShift(entry.shift) === "day").length})`,
+      callback_data: `txview:${sheetIndex}:${platformIndex}:day:0`,
+    },
+    {
+      text: `🌇 Mid (${currentPlatform.entries.filter((entry) => normalizeTransactionShift(entry.shift) === "mid").length})`,
+      callback_data: `txview:${sheetIndex}:${platformIndex}:mid:0`,
+    },
+    {
+      text: `🌙 Night (${currentPlatform.entries.filter((entry) => normalizeTransactionShift(entry.shift) === "night").length})`,
+      callback_data: `txview:${sheetIndex}:${platformIndex}:night:0`,
+    },
+  ]);
+
+  rows.push([
     { text: "🗂 Platform List", callback_data: `txplatforms:${sheetIndex}` },
     { text: "🏠 Dashboard", callback_data: "menu:0" },
   ]);
-
-  return { inline_keyboard: rows };
-}
-
-function buildDailyTransactionEntryKeyboard(
-  sheetIndex: number,
-  preview: DailyTransactionPreview,
-): SheetNavigation {
-  const rows: InlineKeyboardButton[][] = [];
-  const currentPlatform = preview.currentPlatform;
-  const totalStaff = currentPlatform.entries.length;
-  const staffNav: InlineKeyboardButton[] = [];
-
-  if (preview.staffIndex > 0) {
-    staffNav.push({
-      text: "◀ Previous Staff",
-      callback_data: `txstaff:${sheetIndex}:${preview.platformIndex}:${preview.staffIndex - 1}`,
-    });
-  }
-
-  if (preview.staffIndex + 1 < totalStaff) {
-    staffNav.push({
-      text: "Next Staff ▶",
-      callback_data: `txstaff:${sheetIndex}:${preview.platformIndex}:${preview.staffIndex + 1}`,
-    });
-  }
-
-  if (staffNav.length > 0) {
-    rows.push(staffNav);
-  }
-
-  rows.push([
-    { text: "👥 Staff List", callback_data: `txplatform:${sheetIndex}:${preview.platformIndex}:0` },
-    { text: "🗂 Platform List", callback_data: `txplatforms:${sheetIndex}` },
-  ]);
-
-  rows.push([{ text: "🏠 Dashboard", callback_data: "menu:0" }]);
 
   return { inline_keyboard: rows };
 }
@@ -1309,11 +1289,10 @@ ${platforms.length} platform${platforms.length === 1 ? "" : "s"} ready`,
   }
 }
 
-async function showDailyTransactionStaffMenu(
+async function showDailyTransactionShiftMenu(
   callbackQuery: TelegramCallbackQuery,
   sheetIndex: number,
   platformIndex: number,
-  staffPage = 0,
 ) {
   const message = callbackQuery.message;
 
@@ -1334,26 +1313,33 @@ async function showDailyTransactionStaffMenu(
   await answerCallbackQuery(callbackQuery.id);
   await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
 
-  const perPage = 6;
-  const totalPages = Math.max(1, Math.ceil(currentPlatform.entries.length / perPage));
-  const safePage = Math.max(0, Math.min(staffPage, totalPages - 1));
-  const startIndex = safePage * perPage + 1;
-  const endIndex = Math.min(currentPlatform.entries.length, safePage * perPage + perPage);
+  const defaultShift: ShiftingShiftKind = currentPlatform.entries.some((entry) => normalizeTransactionShift(entry.shift) === "day")
+    ? "day"
+    : currentPlatform.entries.some((entry) => normalizeTransactionShift(entry.shift) === "mid")
+      ? "mid"
+      : "night";
 
   await sendKeyboardMessage(
     message.chat.id,
     `💹 DAILY TRANSACTIONS
 ${currentPlatform.title}
-Choose a staff profile (${startIndex}-${endIndex} of ${currentPlatform.entries.length}).`,
-    buildDailyTransactionStaffKeyboard(sheetIndex, safePlatformIndex, platforms, safePage),
+Choose Day, Mid, or Night to view all staff transactions.`,
+    buildDailyTransactionShiftKeyboard(
+      sheetIndex,
+      safePlatformIndex,
+      platforms,
+      defaultShift,
+      0,
+    ),
   );
 }
 
-async function showDailyTransactionEntry(
+async function showDailyTransactionView(
   callbackQuery: TelegramCallbackQuery,
   sheetIndex: number,
   platformIndex: number,
-  staffIndex: number,
+  shiftKind: ShiftingShiftKind,
+  entryPage = 0,
 ) {
   const message = callbackQuery.message;
 
@@ -1362,11 +1348,11 @@ async function showDailyTransactionEntry(
     return;
   }
 
-  const preview = await getDailyTransactionPreview(platformIndex, staffIndex);
+  const preview = await getDailyTransactionPreview(platformIndex, shiftKind, entryPage);
   await answerCallbackQuery(callbackQuery.id, "Loading...");
   const loadingMessageId = await sendStatusMessage(
     message.chat.id,
-    `⏳ Loading ${preview.currentStaff.name} transactions...`,
+    `⏳ Loading ${preview.currentPlatform.title} ${shiftKind} transactions...`,
   );
 
   try {
@@ -1376,7 +1362,13 @@ async function showDailyTransactionEntry(
       message.chat.id,
       imageBuffer,
       buildDailyTransactionCaption(preview),
-      buildDailyTransactionEntryKeyboard(sheetIndex, preview),
+      buildDailyTransactionShiftKeyboard(
+        sheetIndex,
+        preview.platformIndex,
+        preview.platforms,
+        preview.shiftKind,
+        preview.entryPage,
+      ),
     );
   } finally {
     if (loadingMessageId) {
@@ -2994,11 +2986,10 @@ async function renderDailyTransactionOverviewImage(summary: DailyTransactionSumm
 }
 
 async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview) {
-  const activeMetrics = preview.currentStaff.metrics.filter((metric) => metric.value.length > 0);
-  const metrics = activeMetrics.length > 0 ? activeMetrics : preview.currentStaff.metrics;
+  const metrics = preview.headers;
   const width = 1400;
-  const normalizedShift = normalizeTransactionShift(preview.currentStaff.shift);
-  const height = Math.max(1060, 560 + metrics.length * 92);
+  const normalizedShift = preview.shiftKind;
+  const height = Math.max(1040, 360 + Math.max(preview.pagedEntries.length, 1) * 220);
   const shiftAccent =
     normalizedShift === "night"
       ? "#1d4ed8"
@@ -3011,9 +3002,10 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
       : normalizedShift === "mid"
         ? "🌇 Mid Shift / 中班"
         : "🌤️ Day Shift / 白班";
-  const rdCount = metrics.filter((metric) => metric.value.toUpperCase() === "RD").length;
-  const absCount = metrics.filter((metric) => metric.value.toUpperCase() === "ABS").length;
-  const numericValues = metrics
+  const rdCount = preview.entries.flatMap((entry) => entry.metrics).filter((metric) => metric.value.toUpperCase() === "RD").length;
+  const absCount = preview.entries.flatMap((entry) => entry.metrics).filter((metric) => metric.value.toUpperCase() === "ABS").length;
+  const numericValues = preview.entries
+    .flatMap((entry) => entry.metrics)
     .map((metric) => Number(metric.value.replace(/,/g, "")))
     .filter((value) => Number.isFinite(value));
   const peakValue = numericValues.length > 0 ? Math.max(...numericValues) : 0;
@@ -3065,7 +3057,7 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                   color: "#dbeafe",
                 },
               },
-              "Daily Transactions Profile",
+              "Daily Transactions Board",
             ),
             createElement(
               "div",
@@ -3078,7 +3070,7 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                   textAlign: "center",
                 },
               },
-              preview.currentStaff.name,
+              preview.currentPlatform.title,
             ),
             createElement(
               "div",
@@ -3091,7 +3083,7 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                   textAlign: "center",
                 },
               },
-              `${preview.currentPlatform.title} · ${shiftLabel}`,
+              `${shiftLabel} · ${preview.entries.length} staff profile${preview.entries.length === 1 ? "" : "s"}`,
             ),
           ],
         ),
@@ -3107,7 +3099,7 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
             },
           },
           [
-            { label: "Active Days", value: String(activeMetrics.length || metrics.length), accent: "#0f766e" },
+            { label: "Staff Count", value: String(preview.entries.length), accent: "#0f766e" },
             { label: "RD", value: String(rdCount), accent: "#ea580c" },
             { label: "ABS", value: String(absCount), accent: "#dc2626" },
             { label: "Peak Value", value: peakValue > 0 ? peakValue.toLocaleString("en-US") : "-", accent: shiftAccent },
@@ -3175,8 +3167,8 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
             },
           },
           [
-            { label: "System User", value: preview.currentStaff.systemUser || "-" },
-            { label: "Platform", value: preview.currentStaff.platform || "-" },
+            { label: "Platform", value: preview.currentPlatform.title || "-" },
+            { label: "View", value: `${shiftLabel} · Page ${preview.entryPage + 1} / ${preview.totalEntryPages}` },
           ].map((item) =>
             createElement(
               "div",
@@ -3235,29 +3227,20 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
               gap: "12px",
             },
           },
-          metrics.map((metric) =>
+          preview.pagedEntries.length > 0
+            ? preview.pagedEntries.map((entry) =>
             createElement(
               "div",
               {
-                key: metric.label,
+                key: `${entry.name}-${entry.systemUser}`,
                 style: {
                   display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
+                  flexDirection: "column",
+                  gap: "12px",
                   padding: "20px 24px",
                   borderRadius: "22px",
-                  background:
-                    metric.value.toUpperCase() === "RD"
-                      ? "linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)"
-                      : metric.value.toUpperCase() === "ABS"
-                        ? "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)"
-                        : "#ffffff",
-                  border:
-                    metric.value.toUpperCase() === "RD"
-                      ? "2px solid #f97316"
-                      : metric.value.toUpperCase() === "ABS"
-                        ? "2px solid #ef4444"
-                        : `2px solid ${shiftAccent}`,
+                  background: "#ffffff",
+                  border: `2px solid ${shiftAccent}`,
                   boxShadow: "0 10px 24px rgba(15, 23, 42, 0.08)",
                 },
               },
@@ -3265,35 +3248,134 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
                 createElement(
                   "div",
                   {
-                    key: "label",
+                    key: "top",
                     style: {
-                      fontSize: "26px",
-                      fontWeight: 700,
-                      color: "#1e293b",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "12px",
                     },
                   },
-                  `Day ${metric.label}`,
+                  [
+                    createElement(
+                      "div",
+                      {
+                        key: "name",
+                        style: {
+                          fontSize: "28px",
+                          fontWeight: 800,
+                          color: "#0f172a",
+                        },
+                      },
+                      entry.name,
+                    ),
+                    createElement(
+                      "div",
+                      {
+                        key: "user",
+                        style: {
+                          fontSize: "18px",
+                          color: "#475569",
+                          fontWeight: 700,
+                        },
+                      },
+                      entry.systemUser || "-",
+                    ),
+                  ],
                 ),
                 createElement(
                   "div",
                   {
-                    key: "value",
+                    key: "grid",
                     style: {
-                      fontSize: "34px",
-                      fontWeight: 800,
-                      color:
-                        metric.value.toUpperCase() === "RD"
-                          ? "#c2410c"
-                          : metric.value.toUpperCase() === "ABS"
-                            ? "#b91c1c"
-                            : "#0f172a",
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "10px",
                     },
                   },
-                  metric.value || "-",
+                  entry.metrics.map((metric) =>
+                    createElement(
+                      "div",
+                      {
+                        key: `${entry.name}-${metric.label}`,
+                        style: {
+                          width: "120px",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: "12px 8px",
+                          borderRadius: "18px",
+                          background:
+                            metric.value.toUpperCase() === "RD"
+                              ? "linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)"
+                              : metric.value.toUpperCase() === "ABS"
+                                ? "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)"
+                                : "#f8fafc",
+                          border:
+                            metric.value.toUpperCase() === "RD"
+                              ? "2px solid #f97316"
+                              : metric.value.toUpperCase() === "ABS"
+                                ? "2px solid #ef4444"
+                                : "1px solid #cbd5e1",
+                        },
+                      },
+                      [
+                        createElement(
+                          "div",
+                          {
+                            key: "label",
+                            style: {
+                              fontSize: "16px",
+                              color: "#64748b",
+                              fontWeight: 700,
+                            },
+                          },
+                          `Day ${metric.label}`,
+                        ),
+                        createElement(
+                          "div",
+                          {
+                            key: "value",
+                            style: {
+                              marginTop: "6px",
+                              fontSize: "24px",
+                              fontWeight: 800,
+                              color:
+                                metric.value.toUpperCase() === "RD"
+                                  ? "#c2410c"
+                                  : metric.value.toUpperCase() === "ABS"
+                                    ? "#b91c1c"
+                                    : "#0f172a",
+                            },
+                          },
+                          metric.value || "-",
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
-          ),
+          )
+            : [
+                createElement(
+                  "div",
+                  {
+                    key: "empty",
+                    style: {
+                      fontSize: "24px",
+                      color: "#64748b",
+                      padding: "26px 18px",
+                      textAlign: "center",
+                      background: "#ffffff",
+                      borderRadius: "22px",
+                      border: `2px dashed ${shiftAccent}`,
+                    },
+                  },
+                  `No ${shiftLabel.toLowerCase()} entries found in ${preview.currentPlatform.title}.`,
+                ),
+              ],
         ),
       ],
     ),
@@ -3528,32 +3610,36 @@ Select a live command center.`,
   }
 
   if (data.startsWith("txplatform:")) {
-    const [, sheetIndexValue, platformIndexValue, staffPageValue] = data.split(":");
+    const [, sheetIndexValue, platformIndexValue] = data.split(":");
     const sheetIndex = Number(sheetIndexValue);
     const platformIndex = Number(platformIndexValue);
-    const staffPage = Number(staffPageValue ?? "0");
 
-    if (Number.isNaN(sheetIndex) || Number.isNaN(platformIndex) || Number.isNaN(staffPage)) {
+    if (Number.isNaN(sheetIndex) || Number.isNaN(platformIndex)) {
       await answerCallbackQuery(callbackQuery.id, "Invalid platform request.");
       return;
     }
 
-    await showDailyTransactionStaffMenu(callbackQuery, sheetIndex, platformIndex, staffPage);
+    await showDailyTransactionShiftMenu(callbackQuery, sheetIndex, platformIndex);
     return;
   }
 
-  if (data.startsWith("txstaff:")) {
-    const [, sheetIndexValue, platformIndexValue, staffIndexValue] = data.split(":");
+  if (data.startsWith("txview:")) {
+    const [, sheetIndexValue, platformIndexValue, shiftKindValue, entryPageValue] = data.split(":");
     const sheetIndex = Number(sheetIndexValue);
     const platformIndex = Number(platformIndexValue);
-    const staffIndex = Number(staffIndexValue);
+    const entryPage = Number(entryPageValue ?? "0");
 
-    if (Number.isNaN(sheetIndex) || Number.isNaN(platformIndex) || Number.isNaN(staffIndex)) {
-      await answerCallbackQuery(callbackQuery.id, "Invalid staff request.");
+    if (
+      Number.isNaN(sheetIndex) ||
+      Number.isNaN(platformIndex) ||
+      Number.isNaN(entryPage) ||
+      (shiftKindValue !== "day" && shiftKindValue !== "mid" && shiftKindValue !== "night")
+    ) {
+      await answerCallbackQuery(callbackQuery.id, "Invalid transactions request.");
       return;
     }
 
-    await showDailyTransactionEntry(callbackQuery, sheetIndex, platformIndex, staffIndex);
+    await showDailyTransactionView(callbackQuery, sheetIndex, platformIndex, shiftKindValue, entryPage);
     return;
   }
 
