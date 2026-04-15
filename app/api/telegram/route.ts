@@ -673,6 +673,26 @@ function normalizeTransactionShift(shift: string) {
   return "day";
 }
 
+function getTransactionStats(metrics: DailyTransactionMetric[]) {
+  const rdCount = metrics.filter((metric) => metric.value.toUpperCase() === "RD").length;
+  const absCount = metrics.filter((metric) => metric.value.toUpperCase() === "ABS").length;
+  const numericValues = metrics
+    .map((metric) => Number(metric.value.replace(/,/g, "")))
+    .filter((value) => Number.isFinite(value));
+  const totalProcessed = numericValues.reduce((sum, value) => sum + value, 0);
+  const peakValue = numericValues.length > 0 ? Math.max(...numericValues) : 0;
+  const activeDays = metrics.filter((metric) => metric.value.length > 0).length;
+
+  return {
+    rdCount,
+    absCount,
+    numericValues,
+    totalProcessed,
+    peakValue,
+    activeDays,
+  };
+}
+
 async function getDailyTransactionData() {
   const rows = await readSheetRange("APRIL DAILY TRANSACTIONS", "A1:N260");
   const headerRow =
@@ -832,13 +852,18 @@ function buildDailyTransactionCaption(preview: DailyTransactionPreview) {
       : preview.shiftKind === "mid"
         ? "🌇 Mid Shift"
         : "🌤️ Day Shift";
+  const totalProcessed = preview.entries
+    .flatMap((entry) => entry.metrics)
+    .map((metric) => Number(metric.value.replace(/,/g, "")))
+    .filter((value) => Number.isFinite(value))
+    .reduce((sum, value) => sum + value, 0);
   const pageLabel = preview.totalEntryPages > 1
     ? `\nShowing ${preview.pagedEntries.length} of ${preview.entries.length} · Page ${preview.entryPage + 1} of ${preview.totalEntryPages}`
     : "";
 
   return `💹 DAILY TRANSACTIONS COMMAND BOARD
 ${preview.currentPlatform.title}
-${shiftLabel} · ${preview.entries.length} staff transaction profile${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
+${shiftLabel} · ${preview.entries.length} staff · Total Processed ${totalProcessed.toLocaleString("en-US")}${pageLabel}`;
 }
 
 function buildSheetNavigation(sheetIndex: number, page: number, totalPages: number, rowLabel?: string): SheetNavigation {
@@ -1279,6 +1304,7 @@ async function showDailyTransactionPlatformMenu(
       imageBuffer,
       `💹 DAILY TRANSACTIONS COMMAND CENTER
 Choose a platform to continue
+Then open Day, Mid, or Night
 ${platforms.length} platform${platforms.length === 1 ? "" : "s"} ready`,
       buildDailyTransactionPlatformKeyboard(sheetIndex, platforms),
     );
@@ -2082,7 +2108,7 @@ async function renderDashboardHomeImage() {
             {
               badge: "💹",
               title: "DAILY TRANSACTIONS BOARD",
-              subtitle: "Choose a platform, open a staff profile, and review each user transaction line clearly.",
+              subtitle: "Choose a platform and shift, then review all staff transaction activity in one premium board.",
               accent: "linear-gradient(135deg, #14532d 0%, #0f766e 45%, #1e3a5f 100%)",
             },
           ].map((card) =>
@@ -2915,7 +2941,7 @@ async function renderDailyTransactionOverviewImage(summary: DailyTransactionSumm
                   textAlign: "center",
                 },
               },
-              "Choose a platform, then open a staff profile to review transaction activity.",
+              "Choose a platform, then a shift, to review all staff transaction activity together.",
             ),
           ],
         ),
@@ -2986,7 +3012,6 @@ async function renderDailyTransactionOverviewImage(summary: DailyTransactionSumm
 }
 
 async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview) {
-  const metrics = preview.headers;
   const width = 1400;
   const normalizedShift = preview.shiftKind;
   const height = Math.max(1040, 360 + Math.max(preview.pagedEntries.length, 1) * 220);
@@ -3002,14 +3027,7 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
       : normalizedShift === "mid"
         ? "🌇 Mid Shift / 中班"
         : "🌤️ Day Shift / 白班";
-  const rdCount = preview.entries.flatMap((entry) => entry.metrics).filter((metric) => metric.value.toUpperCase() === "RD").length;
-  const absCount = preview.entries.flatMap((entry) => entry.metrics).filter((metric) => metric.value.toUpperCase() === "ABS").length;
-  const numericValues = preview.entries
-    .flatMap((entry) => entry.metrics)
-    .map((metric) => Number(metric.value.replace(/,/g, "")))
-    .filter((value) => Number.isFinite(value));
-  const peakValue = numericValues.length > 0 ? Math.max(...numericValues) : 0;
-  const totalValue = numericValues.reduce((sum, value) => sum + value, 0);
+  const overallStats = getTransactionStats(preview.entries.flatMap((entry) => entry.metrics));
 
   const image = new ImageResponse(
     createElement(
@@ -3100,10 +3118,10 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
           },
           [
             { label: "Staff Count", value: String(preview.entries.length), accent: "#0f766e" },
-            { label: "RD", value: String(rdCount), accent: "#ea580c" },
-            { label: "ABS", value: String(absCount), accent: "#dc2626" },
-            { label: "Peak Value", value: peakValue > 0 ? peakValue.toLocaleString("en-US") : "-", accent: shiftAccent },
-            { label: "Total Value", value: totalValue > 0 ? totalValue.toLocaleString("en-US") : "-", accent: "#1e3a5f" },
+            { label: "RD", value: String(overallStats.rdCount), accent: "#ea580c" },
+            { label: "ABS", value: String(overallStats.absCount), accent: "#dc2626" },
+            { label: "Peak Value", value: overallStats.peakValue > 0 ? overallStats.peakValue.toLocaleString("en-US") : "-", accent: shiftAccent },
+            { label: "Total Processed", value: overallStats.totalProcessed > 0 ? overallStats.totalProcessed.toLocaleString("en-US") : "-", accent: "#1e3a5f" },
           ].map((item) =>
             createElement(
               "div",
@@ -3228,136 +3246,202 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
             },
           },
           preview.pagedEntries.length > 0
-            ? preview.pagedEntries.map((entry) =>
-            createElement(
-              "div",
-              {
-                key: `${entry.name}-${entry.systemUser}`,
-                style: {
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
-                  padding: "20px 24px",
-                  borderRadius: "22px",
-                  background: "#ffffff",
-                  border: `2px solid ${shiftAccent}`,
-                  boxShadow: "0 10px 24px rgba(15, 23, 42, 0.08)",
-                },
-              },
-              [
-                createElement(
+            ? preview.pagedEntries.map((entry) => {
+                const entryStats = getTransactionStats(entry.metrics);
+
+                return createElement(
                   "div",
                   {
-                    key: "top",
+                    key: `${entry.name}-${entry.systemUser}`,
                     style: {
                       display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
+                      flexDirection: "column",
                       gap: "12px",
+                      padding: "20px 24px",
+                      borderRadius: "22px",
+                      background: "#ffffff",
+                      border: `2px solid ${shiftAccent}`,
+                      boxShadow: "0 10px 24px rgba(15, 23, 42, 0.08)",
                     },
                   },
                   [
                     createElement(
                       "div",
                       {
-                        key: "name",
+                        key: "top",
                         style: {
-                          fontSize: "28px",
-                          fontWeight: 800,
-                          color: "#0f172a",
-                        },
-                      },
-                      entry.name,
-                    ),
-                    createElement(
-                      "div",
-                      {
-                        key: "user",
-                        style: {
-                          fontSize: "18px",
-                          color: "#475569",
-                          fontWeight: 700,
-                        },
-                      },
-                      entry.systemUser || "-",
-                    ),
-                  ],
-                ),
-                createElement(
-                  "div",
-                  {
-                    key: "grid",
-                    style: {
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: "10px",
-                    },
-                  },
-                  entry.metrics.map((metric) =>
-                    createElement(
-                      "div",
-                      {
-                        key: `${entry.name}-${metric.label}`,
-                        style: {
-                          width: "120px",
                           display: "flex",
-                          flexDirection: "column",
+                          justifyContent: "space-between",
                           alignItems: "center",
-                          justifyContent: "center",
-                          padding: "12px 8px",
-                          borderRadius: "18px",
-                          background:
-                            metric.value.toUpperCase() === "RD"
-                              ? "linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)"
-                              : metric.value.toUpperCase() === "ABS"
-                                ? "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)"
-                                : "#f8fafc",
-                          border:
-                            metric.value.toUpperCase() === "RD"
-                              ? "2px solid #f97316"
-                              : metric.value.toUpperCase() === "ABS"
-                                ? "2px solid #ef4444"
-                                : "1px solid #cbd5e1",
+                          gap: "12px",
                         },
                       },
                       [
                         createElement(
                           "div",
                           {
-                            key: "label",
+                            key: "name",
                             style: {
-                              fontSize: "16px",
-                              color: "#64748b",
-                              fontWeight: 700,
+                              fontSize: "28px",
+                              fontWeight: 800,
+                              color: "#0f172a",
                             },
                           },
-                          `Day ${metric.label}`,
+                          entry.name,
                         ),
                         createElement(
                           "div",
                           {
-                            key: "value",
+                            key: "user",
                             style: {
-                              marginTop: "6px",
-                              fontSize: "24px",
-                              fontWeight: 800,
-                              color:
-                                metric.value.toUpperCase() === "RD"
-                                  ? "#c2410c"
-                                  : metric.value.toUpperCase() === "ABS"
-                                    ? "#b91c1c"
-                                    : "#0f172a",
+                              fontSize: "18px",
+                              color: "#475569",
+                              fontWeight: 700,
                             },
                           },
-                          metric.value || "-",
+                          entry.systemUser || "-",
                         ),
                       ],
                     ),
-                  ),
-                ),
-              ],
-            ),
-          )
+                    createElement(
+                      "div",
+                      {
+                        key: "entry-summary",
+                        style: {
+                          display: "flex",
+                          gap: "10px",
+                          flexWrap: "wrap",
+                        },
+                      },
+                      [
+                        { label: "Processed", value: entryStats.totalProcessed > 0 ? entryStats.totalProcessed.toLocaleString("en-US") : "-" },
+                        { label: "Peak", value: entryStats.peakValue > 0 ? entryStats.peakValue.toLocaleString("en-US") : "-" },
+                        { label: "Active Days", value: String(entryStats.activeDays) },
+                        { label: "RD", value: String(entryStats.rdCount) },
+                        { label: "ABS", value: String(entryStats.absCount) },
+                      ].map((item) =>
+                        createElement(
+                          "div",
+                          {
+                            key: item.label,
+                            style: {
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              minWidth: "110px",
+                              padding: "10px 12px",
+                              borderRadius: "16px",
+                              background: "#f8fafc",
+                              border: "1px solid #cbd5e1",
+                            },
+                          },
+                          [
+                            createElement(
+                              "div",
+                              {
+                                key: "label",
+                                style: {
+                                  fontSize: "13px",
+                                  color: "#64748b",
+                                  textTransform: "uppercase",
+                                  letterSpacing: "0.5px",
+                                },
+                              },
+                              item.label,
+                            ),
+                            createElement(
+                              "div",
+                              {
+                                key: "value",
+                                style: {
+                                  marginTop: "4px",
+                                  fontSize: "20px",
+                                  fontWeight: 800,
+                                  color: "#0f172a",
+                                },
+                              },
+                              item.value,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    createElement(
+                      "div",
+                      {
+                        key: "grid",
+                        style: {
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "10px",
+                        },
+                      },
+                      entry.metrics.map((metric) =>
+                        createElement(
+                          "div",
+                          {
+                            key: `${entry.name}-${metric.label}`,
+                            style: {
+                              width: "120px",
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              padding: "12px 8px",
+                              borderRadius: "18px",
+                              background:
+                                metric.value.toUpperCase() === "RD"
+                                  ? "linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)"
+                                  : metric.value.toUpperCase() === "ABS"
+                                    ? "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)"
+                                    : "#f8fafc",
+                              border:
+                                metric.value.toUpperCase() === "RD"
+                                  ? "2px solid #f97316"
+                                  : metric.value.toUpperCase() === "ABS"
+                                    ? "2px solid #ef4444"
+                                    : "1px solid #cbd5e1",
+                            },
+                          },
+                          [
+                            createElement(
+                              "div",
+                              {
+                                key: "label",
+                                style: {
+                                  fontSize: "16px",
+                                  color: "#64748b",
+                                  fontWeight: 700,
+                                },
+                              },
+                              `Day ${metric.label}`,
+                            ),
+                            createElement(
+                              "div",
+                              {
+                                key: "value",
+                                style: {
+                                  marginTop: "6px",
+                                  fontSize: "24px",
+                                  fontWeight: 800,
+                                  color:
+                                    metric.value.toUpperCase() === "RD"
+                                      ? "#c2410c"
+                                      : metric.value.toUpperCase() === "ABS"
+                                        ? "#b91c1c"
+                                        : "#0f172a",
+                                },
+                              },
+                              metric.value || "-",
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              })
             : [
                 createElement(
                   "div",
