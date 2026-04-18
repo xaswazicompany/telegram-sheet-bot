@@ -1029,10 +1029,15 @@ function buildShiftingPlatformKeyboard(
 
   for (let index = 0; index < sections.length; index += 2) {
     rows.push(
-      sections.slice(index, index + 2).map((section, offset) => ({
-        text: `🏷️ ${shortenCell(section.title, 18)}`,
-        callback_data: `shiftplatform:${dashboard}:${sheetIndex}:${index + offset}`,
-      })),
+      sections.slice(index, index + 2).map((section, offset) => {
+        const totalCount =
+          section.dayEntries.length + section.midEntries.length + section.nightEntries.length;
+
+        return {
+          text: `🏷️ ${shortenCell(section.title, 14)} · ${totalCount}`,
+          callback_data: `shiftplatform:${dashboard}:${sheetIndex}:${index + offset}`,
+        };
+      }),
     );
   }
 
@@ -1301,6 +1306,7 @@ async function showShiftingShiftMenu(
     message.chat.id,
     `🔄 SHIFTING
 ${currentSection.title}
+Day ${currentSection.dayEntries.length} · Mid ${currentSection.midEntries.length} · Night ${currentSection.nightEntries.length}
 Choose Day, Mid, or Night.`,
     buildShiftingShiftKeyboard(
       dashboard,
@@ -2883,7 +2889,7 @@ async function renderShiftingImage(preview: ShiftingPreview) {
   const workspaceLabel = preview.dashboard === "deposit" ? "Deposit" : "Withdraw";
   const pageLabel = preview.totalEntryPages > 1 ? `Showing ${preview.pagedEntries.length} of ${preview.entries.length} · Page ${preview.entryPage + 1} of ${preview.totalEntryPages}` : `Showing ${preview.pagedEntries.length} of ${preview.entries.length}`;
   const entryCount = Math.max(preview.pagedEntries.length, 1);
-  const height = Math.max(1050, 300 + entryCount * 245);
+  const height = Math.max(1120, 420 + entryCount * 245);
 
   const image = new ImageResponse(
     createElement(
@@ -2961,6 +2967,87 @@ async function renderShiftingImage(preview: ShiftingPreview) {
               `${shiftBadge} ${shiftLabel} • ${pageLabel}`,
             ),
           ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "stats",
+            style: {
+              display: "flex",
+              gap: "16px",
+              marginBottom: "20px",
+              flexWrap: "wrap",
+              justifyContent: "center",
+            },
+          },
+          [
+            {
+              label: "Day",
+              value: String(preview.currentSection.dayEntries.length),
+              accent: "#0f766e",
+            },
+            {
+              label: "Mid",
+              value: String(preview.currentSection.midEntries.length),
+              accent: "#7c3aed",
+            },
+            {
+              label: "Night",
+              value: String(preview.currentSection.nightEntries.length),
+              accent: "#1d4ed8",
+            },
+            {
+              label: "Current View",
+              value: `${shiftBadge} ${shiftLabel}`,
+              accent: shiftAccent,
+            },
+          ].map((item) =>
+            createElement(
+              "div",
+              {
+                key: item.label,
+                style: {
+                  minWidth: item.label === "Current View" ? "290px" : "180px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "18px 22px",
+                  borderRadius: "22px",
+                  background: "#ffffff",
+                  borderTop: `6px solid ${item.accent}`,
+                  boxShadow: "0 12px 28px rgba(15, 23, 42, 0.10)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "19px",
+                      color: "#64748b",
+                    },
+                  },
+                  item.label,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: item.label === "Current View" ? "26px" : "40px",
+                      color: "#0f172a",
+                      fontWeight: 800,
+                      marginTop: "8px",
+                      textAlign: "center",
+                    },
+                  },
+                  item.value,
+                ),
+              ],
+            ),
+          ),
         ),
         createElement(
           "div",
