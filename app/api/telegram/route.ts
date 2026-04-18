@@ -111,6 +111,10 @@ type ShiftingBoardPreview = {
   }>;
   totalEntries: number;
   totalPlatforms: number;
+  page: number;
+  totalPages: number;
+  visibleEntries: number;
+  columnCount: number;
 };
 
 type DailyTransactionMetric = {
@@ -719,6 +723,7 @@ async function getShiftingPreview(
 async function getShiftingBoardPreview(
   dashboard: DashboardKey,
   shiftKind: ShiftingShiftKind,
+  page = 0,
 ): Promise<ShiftingBoardPreview> {
   const { summary, sections } = await getShiftingData(dashboard);
   const groupedSections = sections
@@ -733,13 +738,52 @@ async function getShiftingBoardPreview(
     }))
     .filter((section) => section.entries.length > 0);
 
+  const columnCount = groupedSections.length >= 15 ? 4 : groupedSections.length >= 8 ? 3 : 2;
+  const platformBlocks = groupedSections.map((section) => ({
+    ...section,
+    estimatedHeight: 84 + section.entries.length * 44,
+  }));
+  const maxColumnHeight = 1460;
+  const pagedSections: Array<typeof groupedSections> = [];
+  let currentPage: typeof groupedSections = [];
+  let currentHeights = Array.from({ length: columnCount }, () => 0);
+
+  for (const block of platformBlocks) {
+    const shortestColumn = currentHeights.indexOf(Math.min(...currentHeights));
+    const nextColumnHeight = currentHeights[shortestColumn] + block.estimatedHeight;
+    const fitsCurrentPage =
+      currentPage.length === 0 ||
+      nextColumnHeight <= maxColumnHeight;
+
+    if (!fitsCurrentPage) {
+      pagedSections.push(currentPage);
+      currentPage = [];
+      currentHeights = Array.from({ length: columnCount }, () => 0);
+    }
+
+    currentPage.push({ title: block.title, entries: block.entries });
+    const nextShortestColumn = currentHeights.indexOf(Math.min(...currentHeights));
+    currentHeights[nextShortestColumn] += block.estimatedHeight;
+  }
+
+  if (currentPage.length > 0) {
+    pagedSections.push(currentPage);
+  }
+
+  const safePage = Math.max(0, Math.min(page, Math.max(pagedSections.length - 1, 0)));
+  const visibleSections = pagedSections[safePage] ?? [];
+
   return {
     dashboard,
     summary,
     shiftKind,
-    sections: groupedSections,
+    sections: visibleSections,
     totalEntries: groupedSections.reduce((sum, section) => sum + section.entries.length, 0),
     totalPlatforms: groupedSections.length,
+    page: safePage,
+    totalPages: Math.max(1, pagedSections.length),
+    visibleEntries: visibleSections.reduce((sum, section) => sum + section.entries.length, 0),
+    columnCount,
   };
 }
 
@@ -939,9 +983,14 @@ function buildShiftingBoardCaption(preview: ShiftingBoardPreview) {
         ? "🌇 Mid Shift"
         : "🌤️ Day Shift";
 
+  const pageLine =
+    preview.totalPages > 1
+      ? `\nShowing ${preview.visibleEntries} of ${preview.totalEntries} team members · Page ${preview.page + 1} of ${preview.totalPages}`
+      : "";
+
   return `🔄 ${workspaceLabel.toUpperCase()} SHIFTING BOARD
 ${shiftLabel} · ${preview.totalEntries} team member${preview.totalEntries === 1 ? "" : "s"}
-${preview.totalPlatforms} platform${preview.totalPlatforms === 1 ? "" : "s"} shown`;
+${preview.totalPlatforms} platform${preview.totalPlatforms === 1 ? "" : "s"} in this shift${pageLine}`;
 }
 
 function buildDailyTransactionCaption(preview: DailyTransactionPreview) {
@@ -1106,23 +1155,45 @@ function buildShiftingOverviewKeyboard(
   dashboard: DashboardKey,
   sheetIndex: number,
   sections: ShiftingSection[],
+  activeShiftKind?: ShiftingShiftKind,
+  page = 0,
+  totalPages = 1,
 ): SheetNavigation {
   const dayCount = sections.reduce((sum, section) => sum + section.dayEntries.length, 0);
   const midCount = sections.reduce((sum, section) => sum + section.midEntries.length, 0);
   const nightCount = sections.reduce((sum, section) => sum + section.nightEntries.length, 0);
+  const rows: InlineKeyboardButton[][] = [
+    ...(
+      totalPages > 1 && activeShiftKind
+        ? [[
+            ...(page > 0
+              ? [{
+                  text: "◀ Prev Page",
+                  callback_data: `shiftboard:${dashboard}:${sheetIndex}:${activeShiftKind}:${page - 1}`,
+                }]
+              : []),
+            ...(page + 1 < totalPages
+              ? [{
+                  text: "Next Page ▶",
+                  callback_data: `shiftboard:${dashboard}:${sheetIndex}:${activeShiftKind}:${page + 1}`,
+                }]
+              : []),
+          ]]
+        : []
+    ),
+    [
+      { text: activeShiftKind === "day" ? `✅ Day (${dayCount})` : `🌤️ Day (${dayCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:day:0` },
+      { text: activeShiftKind === "mid" ? `✅ Mid (${midCount})` : `🌇 Mid (${midCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:mid:0` },
+      { text: activeShiftKind === "night" ? `✅ Night (${nightCount})` : `🌙 Night (${nightCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:night:0` },
+    ],
+    [
+      { text: `↩ ${getDashboardLabel(dashboard)}`, callback_data: `menu:${dashboard}` },
+      { text: "🧭 Workspaces", callback_data: "home:0" },
+    ],
+  ];
 
   return {
-    inline_keyboard: [
-      [
-        { text: `🌤️ Day (${dayCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:day` },
-        { text: `🌇 Mid (${midCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:mid` },
-        { text: `🌙 Night (${nightCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:night` },
-      ],
-      [
-        { text: `↩ ${getDashboardLabel(dashboard)}`, callback_data: `menu:${dashboard}` },
-        { text: "🧭 Workspaces", callback_data: "home:0" },
-      ],
-    ],
+    inline_keyboard: rows,
   };
 }
 
@@ -1360,6 +1431,7 @@ async function showShiftingBoard(
   dashboard: DashboardKey,
   sheetIndex: number,
   shiftKind: ShiftingShiftKind,
+  page = 0,
 ) {
   const message = callbackQuery.message;
 
@@ -1368,7 +1440,7 @@ async function showShiftingBoard(
     return;
   }
 
-  const preview = await getShiftingBoardPreview(dashboard, shiftKind);
+  const preview = await getShiftingBoardPreview(dashboard, shiftKind, page);
   await answerCallbackQuery(callbackQuery.id, "Loading...");
   const loadingMessageId = await sendStatusMessage(
     message.chat.id,
@@ -1379,7 +1451,14 @@ async function showShiftingBoard(
     const imageBuffer = await renderShiftingBoardImage(preview);
     const caption = buildShiftingBoardCaption(preview);
     const { sections } = await getShiftingData(dashboard);
-    const replyMarkup = buildShiftingOverviewKeyboard(dashboard, sheetIndex, sections);
+    const replyMarkup = buildShiftingOverviewKeyboard(
+      dashboard,
+      sheetIndex,
+      sections,
+      shiftKind,
+      preview.page,
+      preview.totalPages,
+    );
 
     await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
     await sendTelegramPhoto(message.chat.id, imageBuffer, caption, replyMarkup);
@@ -3118,7 +3197,7 @@ async function renderShiftingImage(preview: ShiftingPreview) {
 }
 
 async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
-  const width = 1900;
+  const width = preview.columnCount >= 4 ? 2400 : preview.columnCount === 3 ? 2160 : 1900;
   const shiftAccent =
     preview.shiftKind === "night" ? "#1d4ed8" : preview.shiftKind === "mid" ? "#7c3aed" : "#0f766e";
   const shiftLabel =
@@ -3131,26 +3210,19 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
   const workspaceLabel = preview.dashboard === "deposit" ? "Deposit" : "Withdraw";
   const platformBlocks = preview.sections.map((section) => ({
     ...section,
-    estimatedHeight: 118 + section.entries.length * 62,
+    estimatedHeight: 84 + section.entries.length * 44,
   }));
-
-  const leftColumn: typeof platformBlocks = [];
-  const rightColumn: typeof platformBlocks = [];
-  let leftHeight = 0;
-  let rightHeight = 0;
+  const columns = Array.from({ length: preview.columnCount }, () => [] as typeof platformBlocks);
+  const columnHeights = Array.from({ length: preview.columnCount }, () => 0);
 
   for (const block of platformBlocks) {
-    if (leftHeight <= rightHeight) {
-      leftColumn.push(block);
-      leftHeight += block.estimatedHeight;
-    } else {
-      rightColumn.push(block);
-      rightHeight += block.estimatedHeight;
-    }
+    const shortestColumn = columnHeights.indexOf(Math.min(...columnHeights));
+    columns[shortestColumn].push(block);
+    columnHeights[shortestColumn] += block.estimatedHeight;
   }
 
-  const contentHeight = Math.max(leftHeight, rightHeight);
-  const height = Math.max(1400, 390 + contentHeight);
+  const contentHeight = Math.max(...columnHeights, 0);
+  const height = Math.max(1180, 300 + contentHeight);
 
   const renderPlatformBlock = (block: (typeof platformBlocks)[number]) =>
     createElement(
@@ -3160,11 +3232,11 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
         style: {
           display: "flex",
           flexDirection: "column",
-          borderRadius: "24px",
+          borderRadius: "20px",
           overflow: "hidden",
           background: "#ffffff",
-          boxShadow: "0 14px 32px rgba(15, 23, 42, 0.12)",
-          marginBottom: "18px",
+          boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
+          marginBottom: "14px",
         },
       },
       [
@@ -3176,7 +3248,7 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              padding: "18px 22px",
+              padding: "12px 16px",
               background: `linear-gradient(135deg, ${shiftAccent} 0%, #1f4f46 100%)`,
               color: "#ffffff",
             },
@@ -3187,7 +3259,7 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               {
                 key: "title",
                 style: {
-                  fontSize: "28px",
+                  fontSize: "22px",
                   fontWeight: 800,
                 },
               },
@@ -3198,7 +3270,7 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               {
                 key: "count",
                 style: {
-                  fontSize: "22px",
+                  fontSize: "16px",
                   fontWeight: 700,
                   color: "#dbeafe",
                 },
@@ -3215,9 +3287,9 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               style: {
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "center",
-                gap: "18px",
-                padding: "16px 22px",
+                alignItems: "flex-start",
+                gap: "12px",
+                padding: "10px 14px",
                 background: index % 2 === 0 ? "#ffffff" : "#f8fafc",
                 borderTop: "1px solid #e2e8f0",
               },
@@ -3240,23 +3312,34 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
                     {
                       key: "name",
                       style: {
-                        fontSize: "23px",
+                        fontSize: "17px",
                         fontWeight: 800,
                         color: "#0f172a",
                       },
                     },
-                    shortenCell(entry.name, 28),
+                    shortenCell(entry.name, preview.columnCount >= 4 ? 18 : preview.columnCount === 3 ? 22 : 28),
                   ),
                   createElement(
                     "div",
                     {
                       key: "meta",
                       style: {
-                        fontSize: "16px",
+                        fontSize: "12px",
                         color: "#475569",
                       },
                     },
                     `${entry.role || "-"} · ${entry.id || "-"} · ${entry.startDate || "-"}`,
+                  ),
+                  createElement(
+                    "div",
+                    {
+                      key: "account",
+                      style: {
+                        fontSize: "12px",
+                        color: "#64748b",
+                      },
+                    },
+                    shortenCell(entry.account || "-", preview.columnCount >= 4 ? 24 : 34),
                   ),
                 ],
               ),
@@ -3267,9 +3350,9 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
                   style: {
                     display: "flex",
                     flexDirection: "column",
-                    gap: "6px",
+                    gap: "4px",
                     alignItems: "flex-end",
-                    minWidth: "280px",
+                    minWidth: preview.columnCount >= 4 ? "120px" : "140px",
                   },
                 },
                 [
@@ -3278,27 +3361,27 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
                     {
                       key: "shift",
                       style: {
-                        fontSize: "17px",
+                        fontSize: "12px",
                         fontWeight: 700,
                         color: shiftAccent,
                         background: `${shiftAccent}18`,
-                        padding: "6px 12px",
+                        padding: "4px 8px",
                         borderRadius: "999px",
                       },
                     },
-                    entry.shift || shiftLabel,
+                    shiftBadge,
                   ),
                   createElement(
                     "div",
                     {
-                      key: "account",
+                      key: "platform",
                       style: {
-                        fontSize: "15px",
+                        fontSize: "11px",
                         color: "#64748b",
                         textAlign: "right",
                       },
                     },
-                    shortenCell(entry.account || "-", 32),
+                    shortenCell(entry.platform || "-", 18),
                   ),
                 ],
               ),
@@ -3337,9 +3420,9 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               background: `linear-gradient(135deg, ${shiftAccent} 0%, #1f4f46 100%)`,
               color: "#ffffff",
               borderRadius: "30px",
-              padding: "30px 34px",
-              marginBottom: "22px",
-              boxShadow: "0 18px 36px rgba(15, 23, 42, 0.18)",
+              padding: "20px 28px",
+              marginBottom: "16px",
+              boxShadow: "0 14px 28px rgba(15, 23, 42, 0.16)",
             },
           },
           [
@@ -3348,7 +3431,7 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               {
                 key: "eyebrow",
                 style: {
-                  fontSize: "22px",
+                  fontSize: "15px",
                   letterSpacing: "2px",
                   textTransform: "uppercase",
                   color: "#c7f9cc",
@@ -3362,7 +3445,7 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               {
                 key: "title",
                 style: {
-                  fontSize: "52px",
+                  fontSize: "42px",
                   fontWeight: 800,
                   marginTop: "8px",
                   textAlign: "center",
@@ -3375,13 +3458,15 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               {
                 key: "subtitle",
                 style: {
-                  fontSize: "25px",
+                  fontSize: "16px",
                   color: "#dbeafe",
-                  marginTop: "8px",
+                  marginTop: "6px",
                   textAlign: "center",
                 },
               },
-              `${preview.totalEntries} team members · ${preview.totalPlatforms} platforms · all shown in one board`,
+              preview.totalPages > 1
+                ? `${preview.totalEntries} team members · ${preview.totalPlatforms} platforms · page ${preview.page + 1} of ${preview.totalPages}`
+                : `${preview.totalEntries} team members · ${preview.totalPlatforms} platforms · all shown in one board`,
             ),
           ],
         ),
@@ -3393,26 +3478,26 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               display: "flex",
               gap: "16px",
               justifyContent: "center",
-              marginBottom: "22px",
+              marginBottom: "14px",
             },
           },
           [
             { label: "Platforms", value: String(preview.totalPlatforms) },
-            { label: "Staff", value: String(preview.totalEntries) },
-            { label: "Current View", value: `${shiftBadge} ${shiftLabel}` },
+            { label: "Team Members", value: String(preview.totalEntries) },
+            { label: "Current View", value: preview.totalPages > 1 ? `${shiftBadge} ${shiftLabel} · P${preview.page + 1}` : `${shiftBadge} ${shiftLabel}` },
           ].map((item) =>
             createElement(
               "div",
               {
                 key: item.label,
                 style: {
-                  minWidth: item.label === "Current View" ? "300px" : "220px",
+                  minWidth: item.label === "Current View" ? "250px" : "190px",
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
-                  padding: "18px 22px",
-                  borderRadius: "22px",
+                  padding: "12px 18px",
+                  borderRadius: "18px",
                   background: "#ffffff",
                   borderTop: `6px solid ${shiftAccent}`,
                   boxShadow: "0 12px 28px rgba(15, 23, 42, 0.10)",
@@ -3424,7 +3509,7 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
                   {
                     key: "label",
                     style: {
-                      fontSize: "18px",
+                      fontSize: "14px",
                       color: "#64748b",
                     },
                   },
@@ -3435,10 +3520,10 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
                   {
                     key: "value",
                     style: {
-                      fontSize: item.label === "Current View" ? "28px" : "42px",
+                      fontSize: item.label === "Current View" ? "20px" : "30px",
                       color: "#0f172a",
                       fontWeight: 800,
-                      marginTop: "8px",
+                      marginTop: "6px",
                       textAlign: "center",
                     },
                   },
@@ -3454,37 +3539,25 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
             key: "columns",
             style: {
               display: "flex",
-              gap: "20px",
+              gap: "14px",
               alignItems: "flex-start",
               flex: 1,
             },
           },
-          [
+          columns.map((columnBlocks, columnIndex) =>
             createElement(
               "div",
               {
-                key: "left-column",
+                key: `column-${columnIndex}`,
                 style: {
                   display: "flex",
                   flexDirection: "column",
                   flex: 1,
                 },
               },
-              leftColumn.map(renderPlatformBlock),
+              columnBlocks.map(renderPlatformBlock),
             ),
-            createElement(
-              "div",
-              {
-                key: "right-column",
-                style: {
-                  display: "flex",
-                  flexDirection: "column",
-                  flex: 1,
-                },
-              },
-              rightColumn.map(renderPlatformBlock),
-            ),
-          ],
+          ),
         ),
       ],
     ),
@@ -4419,16 +4492,18 @@ Choose a board below to continue.`,
       parts.length >= 4 && (parts[1] === "deposit" || parts[1] === "withdraw") ? parts[1] : "withdraw";
     const sheetIndex = Number(parts.length >= 4 ? parts[2] : parts[1]);
     const shiftKindValue = parts.length >= 4 ? parts[3] : parts[2];
+    const page = Number((parts.length >= 5 ? parts[4] : "0") ?? "0");
 
     if (
       Number.isNaN(sheetIndex) ||
+      Number.isNaN(page) ||
       (shiftKindValue !== "day" && shiftKindValue !== "mid" && shiftKindValue !== "night")
     ) {
       await answerCallbackQuery(callbackQuery.id, "Invalid shift request.");
       return;
     }
 
-    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKindValue);
+    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKindValue, page);
     return;
   }
 
@@ -4452,7 +4527,7 @@ Choose a board below to continue.`,
       : section?.midEntries.length
         ? "mid"
         : "night";
-    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKind);
+    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKind, 0);
     return;
   }
 
@@ -4474,7 +4549,7 @@ Choose a board below to continue.`,
       return;
     }
 
-    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKindValue);
+    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKindValue, entryPage);
     return;
   }
 
