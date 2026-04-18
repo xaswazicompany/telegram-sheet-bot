@@ -1467,7 +1467,14 @@ async function showShiftingBoard(
   );
 
   try {
-    const imageBuffer = await renderShiftingBoardImage(preview);
+    let imageBuffer: ArrayBuffer;
+
+    try {
+      imageBuffer = await renderShiftingBoardImage(preview);
+    } catch {
+      imageBuffer = await renderShiftingBoardFallbackImage(preview);
+    }
+
     const caption = buildShiftingBoardCaption(preview);
     const { sections } = await getShiftingData(dashboard);
     const replyMarkup = buildShiftingOverviewKeyboard(
@@ -3576,6 +3583,243 @@ async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
               },
               columnBlocks.map(renderPlatformBlock),
             ),
+          ),
+        ),
+      ],
+    ),
+    { width, height },
+  );
+
+  return image.arrayBuffer();
+}
+
+async function renderShiftingBoardFallbackImage(preview: ShiftingBoardPreview) {
+  const width = 1600;
+  const shiftAccent =
+    preview.shiftKind === "night" ? "#1d4ed8" : preview.shiftKind === "mid" ? "#7c3aed" : "#0f766e";
+  const shiftLabel =
+    preview.shiftKind === "night"
+      ? "Night Shift"
+      : preview.shiftKind === "mid"
+        ? "Mid Shift"
+        : "Day Shift";
+  const shiftBadge = preview.shiftKind === "night" ? "🌙" : preview.shiftKind === "mid" ? "🌇" : "🌤️";
+  const workspaceLabel = preview.dashboard === "deposit" ? "Deposit" : "Withdraw";
+  const sectionHeight = preview.sections.reduce(
+    (sum, section) => sum + 88 + section.entries.length * 50,
+    0,
+  );
+  const height = Math.max(1200, 220 + sectionHeight);
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #eef6f4 0%, #e2ecf6 100%)",
+          color: "#0f172a",
+          padding: "28px",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: `linear-gradient(135deg, ${shiftAccent} 0%, #1f4f46 100%)`,
+              color: "#ffffff",
+              borderRadius: "24px",
+              padding: "18px 24px",
+              marginBottom: "18px",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "15px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  color: "#dbeafe",
+                },
+              },
+              `${workspaceLabel} Shifting Board`,
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  marginTop: "6px",
+                  fontSize: "34px",
+                  fontWeight: 800,
+                },
+              },
+              `${shiftBadge} ${shiftLabel}`,
+            ),
+            createElement(
+              "div",
+              {
+                key: "subtitle",
+                style: {
+                  marginTop: "6px",
+                  fontSize: "16px",
+                  color: "#dbeafe",
+                },
+              },
+              `${preview.totalEntries} team members · ${preview.totalPlatforms} platforms`,
+            ),
+          ],
+        ),
+        ...preview.sections.map((section) =>
+          createElement(
+            "div",
+            {
+              key: section.title,
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                background: "#ffffff",
+                borderRadius: "18px",
+                boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
+                marginBottom: "14px",
+                overflow: "hidden",
+              },
+            },
+            [
+              createElement(
+                "div",
+                {
+                  key: "section-header",
+                  style: {
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "12px 16px",
+                    background: `linear-gradient(135deg, ${shiftAccent} 0%, #1f4f46 100%)`,
+                    color: "#ffffff",
+                  },
+                },
+                [
+                  createElement(
+                    "div",
+                    {
+                      key: "title",
+                      style: {
+                        fontSize: "22px",
+                        fontWeight: 800,
+                      },
+                    },
+                    section.title,
+                  ),
+                  createElement(
+                    "div",
+                    {
+                      key: "count",
+                      style: {
+                        fontSize: "16px",
+                        color: "#dbeafe",
+                        fontWeight: 700,
+                      },
+                    },
+                    `${section.entries.length} staff`,
+                  ),
+                ],
+              ),
+              ...section.entries.map((entry, index) =>
+                createElement(
+                  "div",
+                  {
+                    key: `${section.title}-${entry.id}-${index}`,
+                    style: {
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      alignItems: "center",
+                      padding: "12px 16px",
+                      background: index % 2 === 0 ? "#ffffff" : "#f8fafc",
+                      borderTop: "1px solid #e2e8f0",
+                    },
+                  },
+                  [
+                    createElement(
+                      "div",
+                      {
+                        key: "left",
+                        style: {
+                          display: "flex",
+                          flexDirection: "column",
+                          flex: 1,
+                          gap: "4px",
+                        },
+                      },
+                      [
+                        createElement(
+                          "div",
+                          {
+                            key: "name",
+                            style: {
+                              fontSize: "18px",
+                              fontWeight: 800,
+                              color: "#0f172a",
+                            },
+                          },
+                          entry.name || "-",
+                        ),
+                        createElement(
+                          "div",
+                          {
+                            key: "meta",
+                            style: {
+                              fontSize: "12px",
+                              color: "#475569",
+                            },
+                          },
+                          `${entry.role || "-"} · ${entry.id || "-"} · ${entry.startDate || "-"}`,
+                        ),
+                        createElement(
+                          "div",
+                          {
+                            key: "account",
+                            style: {
+                              fontSize: "12px",
+                              color: "#64748b",
+                            },
+                          },
+                          shortenCell(entry.account || "-", 72),
+                        ),
+                      ],
+                    ),
+                    createElement(
+                      "div",
+                      {
+                        key: "platform",
+                        style: {
+                          minWidth: "140px",
+                          fontSize: "12px",
+                          color: "#64748b",
+                          textAlign: "right",
+                        },
+                      },
+                      shortenCell(entry.platform || "-", 18),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ],
