@@ -3,7 +3,6 @@ import { google } from "googleapis";
 const requiredEnvVars = [
   "GOOGLE_CLIENT_EMAIL",
   "GOOGLE_PRIVATE_KEY",
-  "GOOGLE_SHEETS_SPREADSHEET_ID",
 ] as const;
 
 function getEnv(name: (typeof requiredEnvVars)[number]) {
@@ -18,6 +17,16 @@ function getEnv(name: (typeof requiredEnvVars)[number]) {
 
 function getOptionalEnv(name: string) {
   return process.env[name]?.trim();
+}
+
+function getSpreadsheetId(override?: string) {
+  const value = override?.trim() || getOptionalEnv("GOOGLE_SHEETS_SPREADSHEET_ID");
+
+  if (!value) {
+    throw new Error("Missing required environment variable: GOOGLE_SHEETS_SPREADSHEET_ID");
+  }
+
+  return value;
 }
 
 function getSheetsClient() {
@@ -53,9 +62,9 @@ export type SheetWindow = {
   rowOffset: number;
 };
 
-export async function listSheetTabs(): Promise<SheetTab[]> {
+export async function listSheetTabs(spreadsheetIdOverride?: string): Promise<SheetTab[]> {
   const sheets = getSheetsClient();
-  const spreadsheetId = getEnv("GOOGLE_SHEETS_SPREADSHEET_ID");
+  const spreadsheetId = getSpreadsheetId(spreadsheetIdOverride);
 
   const response = await sheets.spreadsheets.get({
     spreadsheetId,
@@ -76,9 +85,10 @@ export async function listSheetTabs(): Promise<SheetTab[]> {
 export async function readSheetRange(
   sheetName: string,
   rangeSuffix: string,
+  spreadsheetIdOverride?: string,
 ): Promise<string[][]> {
   const sheets = getSheetsClient();
-  const spreadsheetId = getEnv("GOOGLE_SHEETS_SPREADSHEET_ID");
+  const spreadsheetId = getSpreadsheetId(spreadsheetIdOverride);
   const range = `${escapeSheetName(sheetName)}!${rangeSuffix}`;
 
   const response = await sheets.spreadsheets.values.get({
@@ -97,9 +107,10 @@ export async function readSheetWindow(
   page = 0,
   rowsPerPage = 10,
   columnsToShow = 8,
+  spreadsheetIdOverride?: string,
 ): Promise<SheetWindow> {
   const sheets = getSheetsClient();
-  const spreadsheetId = getEnv("GOOGLE_SHEETS_SPREADSHEET_ID");
+  const spreadsheetId = getSpreadsheetId(spreadsheetIdOverride);
   const safePage = Math.max(0, page);
   const safeRowsPerPage = Math.max(1, rowsPerPage);
   const safeColumnsToShow = Math.max(1, Math.min(columnsToShow, 26));
@@ -128,7 +139,7 @@ export async function readSheetWindow(
 
 export async function appendLeadRow(row: string[]) {
   const sheets = getSheetsClient();
-  const spreadsheetId = getEnv("GOOGLE_SHEETS_SPREADSHEET_ID");
+  const spreadsheetId = getSpreadsheetId();
   const sheetName = getOptionalEnv("GOOGLE_SHEETS_SHEET_NAME");
 
   if (!sheetName) {

@@ -173,7 +173,45 @@ type SheetNavigation = {
   inline_keyboard: InlineKeyboardButton[][];
 };
 
+type DashboardKey = "withdraw" | "deposit";
+
 const DASHBOARD_SHEET_TITLES = ["REAL TIME", "SHIFTING", "APRIL DAILY TRANSACTIONS"] as const;
+
+function getDepositSpreadsheetId() {
+  return process.env.GOOGLE_SHEETS_SPREADSHEET_ID_DEPOSIT?.trim() || "";
+}
+
+function getSpreadsheetIdForDashboard(dashboard: DashboardKey) {
+  if (dashboard === "deposit") {
+    const spreadsheetId = getDepositSpreadsheetId();
+
+    if (!spreadsheetId) {
+      throw new Error("Missing required environment variable: GOOGLE_SHEETS_SPREADSHEET_ID_DEPOSIT");
+    }
+
+    return spreadsheetId;
+  }
+
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID?.trim();
+
+  if (!spreadsheetId) {
+    throw new Error("Missing required environment variable: GOOGLE_SHEETS_SPREADSHEET_ID");
+  }
+
+  return spreadsheetId;
+}
+
+function getAvailableDashboards(): DashboardKey[] {
+  return getDepositSpreadsheetId() ? ["withdraw", "deposit"] : ["withdraw"];
+}
+
+function getDashboardLabel(dashboard: DashboardKey) {
+  return dashboard === "deposit" ? "Deposit Dashboard" : "Withdraw Dashboard";
+}
+
+function getDashboardBadge(dashboard: DashboardKey) {
+  return dashboard === "deposit" ? "🏦" : "💸";
+}
 
 function getTelegramBotToken() {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
@@ -866,7 +904,13 @@ ${preview.currentPlatform.title}
 ${shiftLabel} · ${preview.entries.length} staff · Total Processed ${totalProcessed.toLocaleString("en-US")}${pageLabel}`;
 }
 
-function buildSheetNavigation(sheetIndex: number, page: number, totalPages: number, rowLabel?: string): SheetNavigation {
+function buildSheetNavigation(
+  dashboard: DashboardKey,
+  sheetIndex: number,
+  page: number,
+  totalPages: number,
+  rowLabel?: string,
+): SheetNavigation {
   const inlineKeyboard: InlineKeyboardButton[][] = [];
   const navigationButtons: InlineKeyboardButton[] = [];
   const safeTotalPages = Math.max(1, totalPages);
@@ -875,22 +919,22 @@ function buildSheetNavigation(sheetIndex: number, page: number, totalPages: numb
   if (page > 0) {
     navigationButtons.push({
       text: "⏮️ First",
-      callback_data: `sheet:${sheetIndex}:0`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:0`,
     });
     navigationButtons.push({
       text: "⬅️ Previous",
-      callback_data: `sheet:${sheetIndex}:${page - 1}`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:${page - 1}`,
     });
   }
 
   if (page < lastPage) {
     navigationButtons.push({
       text: "Next ➡️",
-      callback_data: `sheet:${sheetIndex}:${page + 1}`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:${page + 1}`,
     });
     navigationButtons.push({
       text: "Last ⏭️",
-      callback_data: `sheet:${sheetIndex}:${lastPage}`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:${lastPage}`,
     });
   }
 
@@ -903,7 +947,7 @@ function buildSheetNavigation(sheetIndex: number, page: number, totalPages: numb
   if (page >= 10) {
     jumpButtons.push({
       text: "⏪ -10",
-      callback_data: `sheet:${sheetIndex}:${Math.max(0, page - 10)}`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:${Math.max(0, page - 10)}`,
     });
   }
 
@@ -917,7 +961,7 @@ function buildSheetNavigation(sheetIndex: number, page: number, totalPages: numb
   if (page + 10 < safeTotalPages) {
     jumpButtons.push({
       text: "+10 ⏩",
-      callback_data: `sheet:${sheetIndex}:${Math.min(lastPage, page + 10)}`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:${Math.min(lastPage, page + 10)}`,
     });
   }
 
@@ -925,26 +969,34 @@ function buildSheetNavigation(sheetIndex: number, page: number, totalPages: numb
     inlineKeyboard.push(jumpButtons);
   }
 
-  inlineKeyboard.push([{ text: "🏠 Main Dashboard", callback_data: "menu:0" }]);
+  inlineKeyboard.push([
+    { text: `↩ ${getDashboardLabel(dashboard)}`, callback_data: `menu:${dashboard}` },
+    { text: "🧭 Workspaces", callback_data: "home:0" },
+  ]);
 
   return { inline_keyboard: inlineKeyboard };
 }
 
-function buildSectionNavigation(sheetIndex: number, page: number, totalSections: number): SheetNavigation {
+function buildSectionNavigation(
+  dashboard: DashboardKey,
+  sheetIndex: number,
+  page: number,
+  totalSections: number,
+): SheetNavigation {
   const inlineKeyboard: InlineKeyboardButton[][] = [];
   const navigationButtons: InlineKeyboardButton[] = [];
 
   if (page > 0) {
     navigationButtons.push({
       text: "⬅️ Previous",
-      callback_data: `sheet:${sheetIndex}:${page - 1}`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:${page - 1}`,
     });
   }
 
   if (page + 1 < totalSections) {
     navigationButtons.push({
       text: "Next ➡️",
-      callback_data: `sheet:${sheetIndex}:${page + 1}`,
+      callback_data: `sheet:${dashboard}:${sheetIndex}:${page + 1}`,
     });
   }
 
@@ -952,7 +1004,10 @@ function buildSectionNavigation(sheetIndex: number, page: number, totalSections:
     inlineKeyboard.push(navigationButtons);
   }
 
-  inlineKeyboard.push([{ text: "🏠 Main Dashboard", callback_data: "menu:0" }]);
+  inlineKeyboard.push([
+    { text: `↩ ${getDashboardLabel(dashboard)}`, callback_data: `menu:${dashboard}` },
+    { text: "🧭 Workspaces", callback_data: "home:0" },
+  ]);
 
   return { inline_keyboard: inlineKeyboard };
 }
@@ -969,7 +1024,10 @@ function buildShiftingPlatformKeyboard(sheetIndex: number, sections: ShiftingSec
     );
   }
 
-  rows.push([{ text: "🏠 Return To Dashboard", callback_data: "menu:0" }]);
+  rows.push([
+    { text: "↩ Withdraw Dashboard", callback_data: "menu:withdraw" },
+    { text: "🧭 Workspaces", callback_data: "home:0" },
+  ]);
 
   return { inline_keyboard: rows };
 }
@@ -1043,7 +1101,7 @@ function buildShiftingShiftKeyboard(
 
   rows.push([
     { text: "🗂 Platform List", callback_data: `shiftplatforms:${sheetIndex}` },
-    { text: "🏠 Dashboard", callback_data: "menu:0" },
+    { text: "↩ Withdraw Dashboard", callback_data: "menu:withdraw" },
   ]);
 
   return { inline_keyboard: rows };
@@ -1064,7 +1122,10 @@ function buildDailyTransactionPlatformKeyboard(
     );
   }
 
-  rows.push([{ text: "🏠 Return To Dashboard", callback_data: "menu:0" }]);
+  rows.push([
+    { text: "↩ Withdraw Dashboard", callback_data: "menu:withdraw" },
+    { text: "🧭 Workspaces", callback_data: "home:0" },
+  ]);
 
   return { inline_keyboard: rows };
 }
@@ -1080,7 +1141,7 @@ function buildDailyTransactionShiftKeyboard(
   const currentPlatform = platforms[platformIndex];
 
   if (!currentPlatform) {
-    return { inline_keyboard: [[{ text: "🏠 Dashboard", callback_data: "menu:0" }]] };
+    return { inline_keyboard: [[{ text: "↩ Withdraw Dashboard", callback_data: "menu:withdraw" }]] };
   }
 
   const platformNav: InlineKeyboardButton[] = [];
@@ -1147,7 +1208,7 @@ function buildDailyTransactionShiftKeyboard(
 
   rows.push([
     { text: "🗂 Platform List", callback_data: `txplatforms:${sheetIndex}` },
-    { text: "🏠 Dashboard", callback_data: "menu:0" },
+    { text: "↩ Withdraw Dashboard", callback_data: "menu:withdraw" },
   ]);
 
   return { inline_keyboard: rows };
@@ -1502,26 +1563,44 @@ function getLoadingMessage(sheetTitle: string) {
   }
 }
 
-async function getDashboardSheets() {
-  const sheets = await listSheetTabs();
+async function getDashboardSheets(dashboard: DashboardKey) {
+  const sheets = await listSheetTabs(getSpreadsheetIdForDashboard(dashboard));
+
+  if (dashboard === "deposit") {
+    return sheets;
+  }
 
   return DASHBOARD_SHEET_TITLES.map((title) => sheets.find((sheet) => sheet.title === title)).filter(
     (sheet): sheet is NonNullable<(typeof sheets)[number]> => Boolean(sheet),
   );
 }
 
-async function buildSheetKeyboard() {
-  const sheets = await getDashboardSheets();
-
-  return {
-    inline_keyboard: sheets.map((sheet, index) => [{
-      text:
-        sheet.title === "REAL TIME"
+async function buildSheetKeyboard(dashboard: DashboardKey) {
+  const sheets = await getDashboardSheets(dashboard);
+  const rows: InlineKeyboardButton[][] = sheets.map((sheet, index) => [{
+    text:
+      dashboard === "withdraw"
+        ? sheet.title === "REAL TIME"
           ? "📊 Real-Time Command Center"
           : sheet.title === "SHIFTING"
             ? "🔄 Shifting Command Center"
-            : "💹 Daily Transactions Center",
-      callback_data: `sheet:${index}:0`,
+            : "💹 Daily Transactions Center"
+        : `${getSheetBadge(sheet.title)} ${shortenCell(sheet.title, 28)}`,
+    callback_data: `sheet:${dashboard}:${index}:0`,
+  }]);
+
+  rows.push([{ text: "🧭 Switch Workspace", callback_data: "home:0" }]);
+
+  return {
+    inline_keyboard: rows,
+  };
+}
+
+async function buildHomeKeyboard() {
+  return {
+    inline_keyboard: getAvailableDashboards().map((dashboard) => [{
+      text: `${getDashboardBadge(dashboard)} ${getDashboardLabel(dashboard)}`,
+      callback_data: `menu:${dashboard}`,
     }]),
   };
 }
@@ -1991,7 +2070,7 @@ async function renderDashboardHomeImage() {
                   border: "1px solid rgba(255,255,255,0.12)",
                 },
               },
-              "Withdraw Team",
+              "Operations Workspace",
             ),
             createElement(
               "div",
@@ -2004,7 +2083,7 @@ async function renderDashboardHomeImage() {
                   textAlign: "center",
                 },
               },
-              "Executive Command Center",
+              "Executive Workspace Hub",
             ),
             createElement(
               "div",
@@ -2018,7 +2097,7 @@ async function renderDashboardHomeImage() {
                   maxWidth: "980px",
                 },
               },
-              "Professional live monitoring for operations, platform staffing, and team leader control.",
+              "Choose the live workspace you want to open. Withdraw and Deposit stay separate, but both run in the same Telegram group.",
             ),
           ],
         ),
@@ -2034,8 +2113,8 @@ async function renderDashboardHomeImage() {
           },
           [
             { label: "Mode", value: "Read-Only" },
-            { label: "Boards", value: "3 Active" },
-            { label: "Focus", value: "Operations + Shifting + Transactions" },
+            { label: "Workspaces", value: getAvailableDashboards().length === 2 ? "2 Active" : "1 Active" },
+            { label: "Focus", value: "Withdraw + Deposit" },
           ].map((item) =>
             createElement(
               "div",
@@ -2094,21 +2173,15 @@ async function renderDashboardHomeImage() {
           },
           [
             {
-              badge: "📊",
-              title: "REAL-TIME COMMAND BOARD",
-              subtitle: "Live platform counts, team leaders, shift codes, and operational performance metrics.",
+              badge: "💸",
+              title: "WITHDRAW WORKSPACE",
+              subtitle: "Open Real-Time, Shifting, and Daily Transactions inside the withdraw control path.",
               accent: "linear-gradient(135deg, #0f766e 0%, #1e3a5f 100%)",
             },
             {
-              badge: "🔄",
-              title: "SHIFTING COMMAND BOARD",
-              subtitle: "Platform overview with Day, Mid, and Night staffing control in one guided board.",
-              accent: "linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%)",
-            },
-            {
-              badge: "💹",
-              title: "DAILY TRANSACTIONS BOARD",
-              subtitle: "Choose a platform and shift, then review all staff transaction activity in one premium board.",
+              badge: "🏦",
+              title: "DEPOSIT WORKSPACE",
+              subtitle: "Open deposit sheets in their own clean dashboard so staff can switch between deposit and withdraw clearly.",
               accent: "linear-gradient(135deg, #14532d 0%, #0f766e 45%, #1e3a5f 100%)",
             },
           ].map((card) =>
@@ -3469,22 +3542,35 @@ async function renderDailyTransactionEntryImage(preview: DailyTransactionPreview
   return image.arrayBuffer();
 }
 
-async function sendMenu(chatId: number, text?: string) {
-  const replyMarkup = await buildSheetKeyboard();
+async function sendHomeMenu(chatId: number, text?: string) {
+  const replyMarkup = await buildHomeKeyboard();
   const imageBuffer = await renderDashboardHomeImage();
 
   await sendTelegramPhoto(
     chatId,
     imageBuffer,
-    text ?? `WITHDRAW TEAM
-Executive Dashboard
-Select a live command center.`,
+    text ?? `OPERATIONS HUB
+Executive Workspace Hub
+Choose Withdraw or Deposit.`,
+    replyMarkup,
+  );
+}
+
+async function sendDashboardMenu(chatId: number, dashboard: DashboardKey, text?: string) {
+  const replyMarkup = await buildSheetKeyboard(dashboard);
+
+  await sendKeyboardMessage(
+    chatId,
+    text ??
+      `${getDashboardBadge(dashboard)} ${getDashboardLabel(dashboard)}
+Choose a board below to continue.`,
     replyMarkup,
   );
 }
 
 async function showSheet(
   callbackQuery: TelegramCallbackQuery,
+  dashboard: DashboardKey,
   sheetIndex: number,
   page: number,
 ) {
@@ -3495,7 +3581,7 @@ async function showSheet(
     return;
   }
 
-  const sheets = await getDashboardSheets();
+  const sheets = await getDashboardSheets(dashboard);
   const sheet = sheets[sheetIndex];
 
   if (!sheet) {
@@ -3512,7 +3598,7 @@ async function showSheet(
     let caption: string;
     let replyMarkup: SheetNavigation;
 
-    if (sheet.title === "REAL TIME") {
+    if (dashboard === "withdraw" && sheet.title === "REAL TIME") {
       const safePage = Math.max(0, Math.min(page, REAL_TIME_SECTION_COUNT - 1));
 
       if (safePage === 0) {
@@ -3525,18 +3611,23 @@ async function showSheet(
         caption = buildRealTimeSectionCaption(preview);
       }
 
-      replyMarkup = buildSectionNavigation(sheetIndex, safePage, REAL_TIME_SECTION_COUNT);
-    } else if (sheet.title === "BASICS WITHDARW") {
+      replyMarkup = buildSectionNavigation(dashboard, sheetIndex, safePage, REAL_TIME_SECTION_COUNT);
+    } else if (dashboard === "withdraw" && sheet.title === "BASICS WITHDARW") {
       const preview = await getBasicsWithdrawPreview();
       imageBuffer = await renderBasicsWithdrawImage(preview);
       caption = buildBasicsCaption();
-      replyMarkup = { inline_keyboard: [[{ text: "🏠 Dashboard", callback_data: "menu:0" }]] };
-    } else if (sheet.title === "WORKFOLIO EMAIL") {
+      replyMarkup = {
+        inline_keyboard: [
+          [{ text: "↩ Withdraw Dashboard", callback_data: "menu:withdraw" }],
+          [{ text: "🧭 Workspaces", callback_data: "home:0" }],
+        ],
+      };
+    } else if (dashboard === "withdraw" && sheet.title === "WORKFOLIO EMAIL") {
       const preview = await getWorkfolioEmailPreview(page);
       imageBuffer = await renderWorkfolioEmailImage(preview);
       caption = buildWorkfolioEmailCaption(preview);
-      replyMarkup = buildSectionNavigation(sheetIndex, preview.page, preview.sections.length);
-    } else if (sheet.title === "SHIFTING") {
+      replyMarkup = buildSectionNavigation(dashboard, sheetIndex, preview.page, preview.sections.length);
+    } else if (dashboard === "withdraw" && sheet.title === "SHIFTING") {
       const preview = await getShiftingPreview(page, "day");
       imageBuffer = await renderShiftingImage(preview);
       caption = buildShiftingCaption(preview);
@@ -3552,7 +3643,13 @@ async function showSheet(
     } else {
       const config = getSheetWindowConfig(sheet.title);
       const window = await withTimeout(
-        readSheetWindow(sheet.title, page, config.rowsPerPage, config.columnsToShow),
+        readSheetWindow(
+          sheet.title,
+          page,
+          config.rowsPerPage,
+          config.columnsToShow,
+          getSpreadsheetIdForDashboard(dashboard),
+        ),
         12000,
         `${sheet.title} data load`,
       );
@@ -3570,6 +3667,7 @@ async function showSheet(
       const lastVisibleRow = window.rows.length > 0 ? window.rowOffset + window.rows.length - 1 : window.rowOffset;
       const totalPages = Math.max(1, Math.ceil(sheet.rowCount / config.rowsPerPage));
       replyMarkup = buildSheetNavigation(
+        dashboard,
         sheetIndex,
         page,
         totalPages,
@@ -3588,7 +3686,7 @@ async function showSheet(
       chat_id: message.chat.id,
       text: `⚠️ ${sheet.title} is taking too long right now. Please tap it again in a moment.`,
       reply_markup: {
-        inline_keyboard: [[{ text: "🏠 Dashboard", callback_data: "menu:0" }]],
+        inline_keyboard: [[{ text: `↩ ${getDashboardLabel(dashboard)}`, callback_data: `menu:${dashboard}` }]],
       },
     }).catch(() => undefined);
   } finally {
@@ -3610,7 +3708,7 @@ async function handleMessage(message: TelegramMessage) {
   const text = message.text?.trim().toLowerCase() ?? "";
 
   if (text === "/start" || text === "/menu") {
-    await sendMenu(message.chat.id);
+    await sendHomeMenu(message.chat.id);
     return;
   }
 
@@ -3619,11 +3717,11 @@ async function handleMessage(message: TelegramMessage) {
       chat_id: message.chat.id,
       text: `Commands:
 /start - open sheet menu
-/menu - open sheet menu
+/menu - open workspace menu
 /help - show commands
 /chatid - show this chat ID
 
-This bot is read-only and now focused on REAL TIME, SHIFTING, and DAILY TRANSACTIONS.`,
+This bot is read-only and supports separate Withdraw and Deposit workspaces in the same group.`,
     });
     return;
   }
@@ -3665,18 +3763,34 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery) {
 
   if (data.startsWith("menu:")) {
     await answerCallbackQuery(callbackQuery.id);
+    const [, dashboardValue] = data.split(":");
 
     if (message.photo && message.photo.length > 0) {
       await deleteTelegramMessage(chatId, message.message_id);
     }
 
-    await sendMenu(
-      chatId,
-      `WITHDRAW TEAM Dashboard
-Executive Dashboard
+    if (dashboardValue === "withdraw" || dashboardValue === "deposit") {
+      await sendDashboardMenu(
+        chatId,
+        dashboardValue,
+        `${getDashboardBadge(dashboardValue)} ${getDashboardLabel(dashboardValue)}
+Choose a board below to continue.`,
+      );
+      return;
+    }
 
-Select a live command center.`,
-    );
+    await sendHomeMenu(chatId);
+    return;
+  }
+
+  if (data.startsWith("home:")) {
+    await answerCallbackQuery(callbackQuery.id);
+
+    if (message.photo && message.photo.length > 0) {
+      await deleteTelegramMessage(chatId, message.message_id);
+    }
+
+    await sendHomeMenu(chatId);
     return;
   }
 
@@ -3775,7 +3889,8 @@ Select a live command center.`,
   }
 
   if (data.startsWith("sheet:")) {
-    const [, sheetIndexValue, pageValue] = data.split(":");
+    const [, dashboardValue, sheetIndexValue, pageValue] = data.split(":");
+    const dashboard = dashboardValue === "deposit" ? "deposit" : "withdraw";
     const sheetIndex = Number(sheetIndexValue);
     const page = Number(pageValue);
 
@@ -3784,20 +3899,20 @@ Select a live command center.`,
       return;
     }
 
-    const sheets = await getDashboardSheets();
+    const sheets = await getDashboardSheets(dashboard);
     const sheet = sheets[sheetIndex];
 
-    if (sheet?.title === "SHIFTING") {
+    if (dashboard === "withdraw" && sheet?.title === "SHIFTING") {
       await showShiftingPlatformMenu(callbackQuery, sheetIndex);
       return;
     }
 
-    if (sheet?.title === "APRIL DAILY TRANSACTIONS") {
+    if (dashboard === "withdraw" && sheet?.title === "APRIL DAILY TRANSACTIONS") {
       await showDailyTransactionPlatformMenu(callbackQuery, sheetIndex);
       return;
     }
 
-    await showSheet(callbackQuery, sheetIndex, page);
+    await showSheet(callbackQuery, dashboard, sheetIndex, page);
     return;
   }
 
