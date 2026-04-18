@@ -101,6 +101,18 @@ type ShiftingPreview = {
   pagedEntries: ShiftingEntry[];
 };
 
+type ShiftingBoardPreview = {
+  dashboard: DashboardKey;
+  summary: ShiftingSummaryItem[];
+  shiftKind: ShiftingShiftKind;
+  sections: Array<{
+    title: string;
+    entries: ShiftingEntry[];
+  }>;
+  totalEntries: number;
+  totalPlatforms: number;
+};
+
 type DailyTransactionMetric = {
   label: string;
   value: string;
@@ -704,6 +716,33 @@ async function getShiftingPreview(
   };
 }
 
+async function getShiftingBoardPreview(
+  dashboard: DashboardKey,
+  shiftKind: ShiftingShiftKind,
+): Promise<ShiftingBoardPreview> {
+  const { summary, sections } = await getShiftingData(dashboard);
+  const groupedSections = sections
+    .map((section) => ({
+      title: section.title,
+      entries:
+        shiftKind === "night"
+          ? section.nightEntries
+          : shiftKind === "mid"
+            ? section.midEntries
+            : section.dayEntries,
+    }))
+    .filter((section) => section.entries.length > 0);
+
+  return {
+    dashboard,
+    summary,
+    shiftKind,
+    sections: groupedSections,
+    totalEntries: groupedSections.reduce((sum, section) => sum + section.entries.length, 0),
+    totalPlatforms: groupedSections.length,
+  };
+}
+
 function normalizeTransactionShift(shift: string) {
   const normalized = shift.toLowerCase();
 
@@ -891,6 +930,20 @@ ${preview.currentSection.title}
 ${shiftLabel} · ${preview.entries.length} team member${preview.entries.length === 1 ? "" : "s"}${pageLabel}`;
 }
 
+function buildShiftingBoardCaption(preview: ShiftingBoardPreview) {
+  const workspaceLabel = preview.dashboard === "deposit" ? "Deposit" : "Withdraw";
+  const shiftLabel =
+    preview.shiftKind === "night"
+      ? "🌙 Night Shift"
+      : preview.shiftKind === "mid"
+        ? "🌇 Mid Shift"
+        : "🌤️ Day Shift";
+
+  return `🔄 ${workspaceLabel.toUpperCase()} SHIFTING BOARD
+${shiftLabel} · ${preview.totalEntries} team member${preview.totalEntries === 1 ? "" : "s"}
+${preview.totalPlatforms} platform${preview.totalPlatforms === 1 ? "" : "s"} shown`;
+}
+
 function buildDailyTransactionCaption(preview: DailyTransactionPreview) {
   const shiftLabel =
     preview.shiftKind === "night"
@@ -1047,6 +1100,30 @@ function buildShiftingPlatformKeyboard(
   ]);
 
   return { inline_keyboard: rows };
+}
+
+function buildShiftingOverviewKeyboard(
+  dashboard: DashboardKey,
+  sheetIndex: number,
+  sections: ShiftingSection[],
+): SheetNavigation {
+  const dayCount = sections.reduce((sum, section) => sum + section.dayEntries.length, 0);
+  const midCount = sections.reduce((sum, section) => sum + section.midEntries.length, 0);
+  const nightCount = sections.reduce((sum, section) => sum + section.nightEntries.length, 0);
+
+  return {
+    inline_keyboard: [
+      [
+        { text: `🌤️ Day (${dayCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:day` },
+        { text: `🌇 Mid (${midCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:mid` },
+        { text: `🌙 Night (${nightCount})`, callback_data: `shiftboard:${dashboard}:${sheetIndex}:night` },
+      ],
+      [
+        { text: `↩ ${getDashboardLabel(dashboard)}`, callback_data: `menu:${dashboard}` },
+        { text: "🧭 Workspaces", callback_data: "home:0" },
+      ],
+    ],
+  };
 }
 
 function buildShiftingShiftKeyboard(
@@ -1267,8 +1344,9 @@ async function showShiftingPlatformMenu(
       imageBuffer,
       `🔄 ${dashboard === "deposit" ? "DEPOSIT" : "WITHDRAW"} SHIFTING COMMAND CENTER
 All platforms overview
+Choose Day, Mid, or Night
 ${sections.length} platform${sections.length === 1 ? "" : "s"} ready`,
-      buildShiftingPlatformKeyboard(dashboard, sheetIndex, sections),
+      buildShiftingOverviewKeyboard(dashboard, sheetIndex, sections),
     );
   } finally {
     if (loadingMessageId) {
@@ -1277,57 +1355,11 @@ ${sections.length} platform${sections.length === 1 ? "" : "s"} ready`,
   }
 }
 
-async function showShiftingShiftMenu(
+async function showShiftingBoard(
   callbackQuery: TelegramCallbackQuery,
   dashboard: DashboardKey,
   sheetIndex: number,
-  platformIndex: number,
-) {
-  const message = callbackQuery.message;
-
-  if (!message) {
-    await answerCallbackQuery(callbackQuery.id, "Missing message context.");
-    return;
-  }
-
-  const { sections } = await getShiftingData(dashboard);
-  const safePlatformIndex = Math.max(0, Math.min(platformIndex, Math.max(sections.length - 1, 0)));
-  const currentSection = sections[safePlatformIndex];
-
-  if (!currentSection) {
-    await answerCallbackQuery(callbackQuery.id, "Platform not found.");
-    return;
-  }
-
-  await answerCallbackQuery(callbackQuery.id);
-  await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
-
-  await sendKeyboardMessage(
-    message.chat.id,
-    `🔄 SHIFTING
-${currentSection.title}
-Day ${currentSection.dayEntries.length} · Mid ${currentSection.midEntries.length} · Night ${currentSection.nightEntries.length}
-Choose Day, Mid, or Night.`,
-    buildShiftingShiftKeyboard(
-      dashboard,
-      sheetIndex,
-      safePlatformIndex,
-      currentSection,
-      currentSection.dayEntries.length > 0 ? "day" : currentSection.midEntries.length > 0 ? "mid" : "night",
-      sections.length,
-      0,
-      1,
-    ),
-  );
-}
-
-async function showShiftingView(
-  callbackQuery: TelegramCallbackQuery,
-  dashboard: DashboardKey,
-  sheetIndex: number,
-  platformIndex: number,
   shiftKind: ShiftingShiftKind,
-  entryPage = 0,
 ) {
   const message = callbackQuery.message;
 
@@ -1336,26 +1368,18 @@ async function showShiftingView(
     return;
   }
 
-  const preview = await getShiftingPreview(dashboard, platformIndex, shiftKind, entryPage);
+  const preview = await getShiftingBoardPreview(dashboard, shiftKind);
   await answerCallbackQuery(callbackQuery.id, "Loading...");
   const loadingMessageId = await sendStatusMessage(
     message.chat.id,
-    `⏳ Loading ${preview.currentSection.title} ${shiftKind === "mid" ? "mid" : shiftKind} shift...`,
+    `⏳ Loading ${dashboard === "deposit" ? "deposit" : "withdraw"} ${shiftKind} shift board...`,
   );
 
   try {
-    const imageBuffer = await renderShiftingImage(preview);
-    const caption = buildShiftingCaption(preview);
-    const replyMarkup = buildShiftingShiftKeyboard(
-      dashboard,
-      sheetIndex,
-      preview.platformIndex,
-      preview.currentSection,
-      shiftKind,
-      preview.sections.length,
-      preview.entryPage,
-      preview.totalEntryPages,
-    );
+    const imageBuffer = await renderShiftingBoardImage(preview);
+    const caption = buildShiftingBoardCaption(preview);
+    const { sections } = await getShiftingData(dashboard);
+    const replyMarkup = buildShiftingOverviewKeyboard(dashboard, sheetIndex, sections);
 
     await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
     await sendTelegramPhoto(message.chat.id, imageBuffer, caption, replyMarkup);
@@ -3093,6 +3117,383 @@ async function renderShiftingImage(preview: ShiftingPreview) {
   return image.arrayBuffer();
 }
 
+async function renderShiftingBoardImage(preview: ShiftingBoardPreview) {
+  const width = 1900;
+  const shiftAccent =
+    preview.shiftKind === "night" ? "#1d4ed8" : preview.shiftKind === "mid" ? "#7c3aed" : "#0f766e";
+  const shiftLabel =
+    preview.shiftKind === "night"
+      ? "Night Shift"
+      : preview.shiftKind === "mid"
+        ? "Mid Shift"
+        : "Day Shift";
+  const shiftBadge = preview.shiftKind === "night" ? "🌙" : preview.shiftKind === "mid" ? "🌇" : "🌤️";
+  const workspaceLabel = preview.dashboard === "deposit" ? "Deposit" : "Withdraw";
+  const platformBlocks = preview.sections.map((section) => ({
+    ...section,
+    estimatedHeight: 118 + section.entries.length * 62,
+  }));
+
+  const leftColumn: typeof platformBlocks = [];
+  const rightColumn: typeof platformBlocks = [];
+  let leftHeight = 0;
+  let rightHeight = 0;
+
+  for (const block of platformBlocks) {
+    if (leftHeight <= rightHeight) {
+      leftColumn.push(block);
+      leftHeight += block.estimatedHeight;
+    } else {
+      rightColumn.push(block);
+      rightHeight += block.estimatedHeight;
+    }
+  }
+
+  const contentHeight = Math.max(leftHeight, rightHeight);
+  const height = Math.max(1400, 390 + contentHeight);
+
+  const renderPlatformBlock = (block: (typeof platformBlocks)[number]) =>
+    createElement(
+      "div",
+      {
+        key: block.title,
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          borderRadius: "24px",
+          overflow: "hidden",
+          background: "#ffffff",
+          boxShadow: "0 14px 32px rgba(15, 23, 42, 0.12)",
+          marginBottom: "18px",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "18px 22px",
+              background: `linear-gradient(135deg, ${shiftAccent} 0%, #1f4f46 100%)`,
+              color: "#ffffff",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "28px",
+                  fontWeight: 800,
+                },
+              },
+              block.title,
+            ),
+            createElement(
+              "div",
+              {
+                key: "count",
+                style: {
+                  fontSize: "22px",
+                  fontWeight: 700,
+                  color: "#dbeafe",
+                },
+              },
+              `${block.entries.length} staff`,
+            ),
+          ],
+        ),
+        ...block.entries.map((entry, index) =>
+          createElement(
+            "div",
+            {
+              key: `${block.title}-${entry.id}-${index}`,
+              style: {
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "18px",
+                padding: "16px 22px",
+                background: index % 2 === 0 ? "#ffffff" : "#f8fafc",
+                borderTop: "1px solid #e2e8f0",
+              },
+            },
+            [
+              createElement(
+                "div",
+                {
+                  key: "left",
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                    flex: 1,
+                  },
+                },
+                [
+                  createElement(
+                    "div",
+                    {
+                      key: "name",
+                      style: {
+                        fontSize: "23px",
+                        fontWeight: 800,
+                        color: "#0f172a",
+                      },
+                    },
+                    shortenCell(entry.name, 28),
+                  ),
+                  createElement(
+                    "div",
+                    {
+                      key: "meta",
+                      style: {
+                        fontSize: "16px",
+                        color: "#475569",
+                      },
+                    },
+                    `${entry.role || "-"} · ${entry.id || "-"} · ${entry.startDate || "-"}`,
+                  ),
+                ],
+              ),
+              createElement(
+                "div",
+                {
+                  key: "right",
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                    alignItems: "flex-end",
+                    minWidth: "280px",
+                  },
+                },
+                [
+                  createElement(
+                    "div",
+                    {
+                      key: "shift",
+                      style: {
+                        fontSize: "17px",
+                        fontWeight: 700,
+                        color: shiftAccent,
+                        background: `${shiftAccent}18`,
+                        padding: "6px 12px",
+                        borderRadius: "999px",
+                      },
+                    },
+                    entry.shift || shiftLabel,
+                  ),
+                  createElement(
+                    "div",
+                    {
+                      key: "account",
+                      style: {
+                        fontSize: "15px",
+                        color: "#64748b",
+                        textAlign: "right",
+                      },
+                    },
+                    shortenCell(entry.account || "-", 32),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+  const image = new ImageResponse(
+    createElement(
+      "div",
+      {
+        style: {
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #eef6f4 0%, #e2ecf6 100%)",
+          color: "#0f172a",
+          padding: "34px",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif",
+          boxSizing: "border-box",
+        },
+      },
+      [
+        createElement(
+          "div",
+          {
+            key: "header",
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: `linear-gradient(135deg, ${shiftAccent} 0%, #1f4f46 100%)`,
+              color: "#ffffff",
+              borderRadius: "30px",
+              padding: "30px 34px",
+              marginBottom: "22px",
+              boxShadow: "0 18px 36px rgba(15, 23, 42, 0.18)",
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "eyebrow",
+                style: {
+                  fontSize: "22px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  color: "#c7f9cc",
+                  textAlign: "center",
+                },
+              },
+              `${workspaceLabel} Shifting Board`,
+            ),
+            createElement(
+              "div",
+              {
+                key: "title",
+                style: {
+                  fontSize: "52px",
+                  fontWeight: 800,
+                  marginTop: "8px",
+                  textAlign: "center",
+                },
+              },
+              `${shiftBadge} ${shiftLabel}`,
+            ),
+            createElement(
+              "div",
+              {
+                key: "subtitle",
+                style: {
+                  fontSize: "25px",
+                  color: "#dbeafe",
+                  marginTop: "8px",
+                  textAlign: "center",
+                },
+              },
+              `${preview.totalEntries} team members · ${preview.totalPlatforms} platforms · all shown in one board`,
+            ),
+          ],
+        ),
+        createElement(
+          "div",
+          {
+            key: "summary",
+            style: {
+              display: "flex",
+              gap: "16px",
+              justifyContent: "center",
+              marginBottom: "22px",
+            },
+          },
+          [
+            { label: "Platforms", value: String(preview.totalPlatforms) },
+            { label: "Staff", value: String(preview.totalEntries) },
+            { label: "Current View", value: `${shiftBadge} ${shiftLabel}` },
+          ].map((item) =>
+            createElement(
+              "div",
+              {
+                key: item.label,
+                style: {
+                  minWidth: item.label === "Current View" ? "300px" : "220px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "18px 22px",
+                  borderRadius: "22px",
+                  background: "#ffffff",
+                  borderTop: `6px solid ${shiftAccent}`,
+                  boxShadow: "0 12px 28px rgba(15, 23, 42, 0.10)",
+                },
+              },
+              [
+                createElement(
+                  "div",
+                  {
+                    key: "label",
+                    style: {
+                      fontSize: "18px",
+                      color: "#64748b",
+                    },
+                  },
+                  item.label,
+                ),
+                createElement(
+                  "div",
+                  {
+                    key: "value",
+                    style: {
+                      fontSize: item.label === "Current View" ? "28px" : "42px",
+                      color: "#0f172a",
+                      fontWeight: 800,
+                      marginTop: "8px",
+                      textAlign: "center",
+                    },
+                  },
+                  item.value,
+                ),
+              ],
+            ),
+          ),
+        ),
+        createElement(
+          "div",
+          {
+            key: "columns",
+            style: {
+              display: "flex",
+              gap: "20px",
+              alignItems: "flex-start",
+              flex: 1,
+            },
+          },
+          [
+            createElement(
+              "div",
+              {
+                key: "left-column",
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  flex: 1,
+                },
+              },
+              leftColumn.map(renderPlatformBlock),
+            ),
+            createElement(
+              "div",
+              {
+                key: "right-column",
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  flex: 1,
+                },
+              },
+              rightColumn.map(renderPlatformBlock),
+            ),
+          ],
+        ),
+      ],
+    ),
+    { width, height },
+  );
+
+  return image.arrayBuffer();
+}
+
 async function renderDailyTransactionOverviewImage(summary: DailyTransactionSummary) {
   const width = 1400;
   const height = 920;
@@ -3790,19 +4191,12 @@ async function showSheet(
       caption = buildWorkfolioEmailCaption(preview);
       replyMarkup = buildSectionNavigation(dashboard, sheetIndex, preview.page, preview.sections.length);
     } else if (dashboard === "withdraw" && sheet.title === "SHIFTING") {
-      const preview = await getShiftingPreview(dashboard, page, "day");
-      imageBuffer = await renderShiftingImage(preview);
-      caption = buildShiftingCaption(preview);
-      replyMarkup = buildShiftingShiftKeyboard(
-        dashboard,
-        sheetIndex,
-        preview.platformIndex,
-        preview.currentSection,
-        preview.shiftKind,
-        preview.sections.length,
-        preview.entryPage,
-        preview.totalEntryPages,
-      );
+      const { summary, sections } = await getShiftingData(dashboard);
+      imageBuffer = await renderShiftingOverviewImage(summary, sections.length, dashboard);
+      caption = `🔄 WITHDRAW SHIFTING COMMAND CENTER
+All platforms overview
+Choose Day, Mid, or Night`;
+      replyMarkup = buildShiftingOverviewKeyboard(dashboard, sheetIndex, sections);
     } else {
       const config = getSheetWindowConfig(sheet.title);
       const window = await withTimeout(
@@ -4019,6 +4413,25 @@ Choose a board below to continue.`,
     return;
   }
 
+  if (data.startsWith("shiftboard:")) {
+    const parts = data.split(":");
+    const dashboard =
+      parts.length >= 4 && (parts[1] === "deposit" || parts[1] === "withdraw") ? parts[1] : "withdraw";
+    const sheetIndex = Number(parts.length >= 4 ? parts[2] : parts[1]);
+    const shiftKindValue = parts.length >= 4 ? parts[3] : parts[2];
+
+    if (
+      Number.isNaN(sheetIndex) ||
+      (shiftKindValue !== "day" && shiftKindValue !== "mid" && shiftKindValue !== "night")
+    ) {
+      await answerCallbackQuery(callbackQuery.id, "Invalid shift request.");
+      return;
+    }
+
+    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKindValue);
+    return;
+  }
+
   if (data.startsWith("shiftplatform:")) {
     const parts = data.split(":");
     const dashboard =
@@ -4031,7 +4444,15 @@ Choose a board below to continue.`,
       return;
     }
 
-    await showShiftingShiftMenu(callbackQuery, dashboard, sheetIndex, platformIndex);
+    const { sections } = await getShiftingData(dashboard);
+    const safePlatformIndex = Math.max(0, Math.min(platformIndex, Math.max(sections.length - 1, 0)));
+    const section = sections[safePlatformIndex];
+    const shiftKind: ShiftingShiftKind = section?.dayEntries.length
+      ? "day"
+      : section?.midEntries.length
+        ? "mid"
+        : "night";
+    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKind);
     return;
   }
 
@@ -4047,14 +4468,13 @@ Choose a board below to continue.`,
     if (
       Number.isNaN(sheetIndex) ||
       Number.isNaN(platformIndex) ||
-      Number.isNaN(entryPage) ||
       (shiftKindValue !== "day" && shiftKindValue !== "mid" && shiftKindValue !== "night")
     ) {
       await answerCallbackQuery(callbackQuery.id, "Invalid shift request.");
       return;
     }
 
-    await showShiftingView(callbackQuery, dashboard, sheetIndex, platformIndex, shiftKindValue, entryPage);
+    await showShiftingBoard(callbackQuery, dashboard, sheetIndex, shiftKindValue);
     return;
   }
 
