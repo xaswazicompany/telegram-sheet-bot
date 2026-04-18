@@ -744,30 +744,49 @@ async function getShiftingBoardPreview(
     estimatedHeight: 84 + section.entries.length * 44,
   }));
   const maxColumnHeight = 1460;
-  const pagedSections: Array<typeof groupedSections> = [];
-  let currentPage: typeof groupedSections = [];
-  let currentHeights = Array.from({ length: columnCount }, () => 0);
+  const estimatePageHeight = (blocks: typeof platformBlocks) => {
+    const heights = Array.from({ length: columnCount }, () => 0);
 
-  for (const block of platformBlocks) {
-    const shortestColumn = currentHeights.indexOf(Math.min(...currentHeights));
-    const nextColumnHeight = currentHeights[shortestColumn] + block.estimatedHeight;
-    const fitsCurrentPage =
-      currentPage.length === 0 ||
-      nextColumnHeight <= maxColumnHeight;
-
-    if (!fitsCurrentPage) {
-      pagedSections.push(currentPage);
-      currentPage = [];
-      currentHeights = Array.from({ length: columnCount }, () => 0);
+    for (const block of blocks) {
+      const shortestColumn = heights.indexOf(Math.min(...heights));
+      heights[shortestColumn] += block.estimatedHeight;
     }
 
-    currentPage.push({ title: block.title, entries: block.entries });
-    const nextShortestColumn = currentHeights.indexOf(Math.min(...currentHeights));
-    currentHeights[nextShortestColumn] += block.estimatedHeight;
-  }
+    return Math.max(...heights, 0);
+  };
 
-  if (currentPage.length > 0) {
-    pagedSections.push(currentPage);
+  const pagedSections: Array<typeof groupedSections> = [];
+  const fullHeight = estimatePageHeight(platformBlocks);
+
+  if (platformBlocks.length <= 1 || fullHeight <= maxColumnHeight) {
+    pagedSections.push(groupedSections);
+  } else {
+    let bestSplitIndex = 1;
+    let bestWorstHeight = Number.POSITIVE_INFINITY;
+    let bestHeightGap = Number.POSITIVE_INFINITY;
+
+    for (let splitIndex = 1; splitIndex < platformBlocks.length; splitIndex += 1) {
+      const firstBlocks = platformBlocks.slice(0, splitIndex);
+      const secondBlocks = platformBlocks.slice(splitIndex);
+      const firstHeight = estimatePageHeight(firstBlocks);
+      const secondHeight = estimatePageHeight(secondBlocks);
+      const worstHeight = Math.max(firstHeight, secondHeight);
+      const heightGap = Math.abs(firstHeight - secondHeight);
+
+      if (
+        worstHeight < bestWorstHeight ||
+        (worstHeight === bestWorstHeight && heightGap < bestHeightGap)
+      ) {
+        bestSplitIndex = splitIndex;
+        bestWorstHeight = worstHeight;
+        bestHeightGap = heightGap;
+      }
+    }
+
+    pagedSections.push(
+      groupedSections.slice(0, bestSplitIndex),
+      groupedSections.slice(bestSplitIndex),
+    );
   }
 
   const safePage = Math.max(0, Math.min(page, Math.max(pagedSections.length - 1, 0)));
