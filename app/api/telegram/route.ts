@@ -757,8 +757,13 @@ async function getShiftingBoardPreview(
 
   const pagedSections: Array<typeof groupedSections> = [];
   const fullHeight = estimatePageHeight(platformBlocks);
+  const totalEntries = groupedSections.reduce((sum, section) => sum + section.entries.length, 0);
+  const shouldSplitIntoTwoPages =
+    platformBlocks.length > 10 ||
+    totalEntries > 24 ||
+    fullHeight > maxColumnHeight;
 
-  if (platformBlocks.length <= 1 || fullHeight <= maxColumnHeight) {
+  if (platformBlocks.length <= 1 || !shouldSplitIntoTwoPages) {
     pagedSections.push(groupedSections);
   } else {
     let bestSplitIndex = 1;
@@ -797,7 +802,7 @@ async function getShiftingBoardPreview(
     summary,
     shiftKind,
     sections: visibleSections,
-    totalEntries: groupedSections.reduce((sum, section) => sum + section.entries.length, 0),
+    totalEntries,
     totalPlatforms: groupedSections.length,
     page: safePage,
     totalPages: Math.max(1, pagedSections.length),
