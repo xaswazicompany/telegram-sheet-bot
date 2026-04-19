@@ -759,38 +759,37 @@ async function getShiftingBoardPreview(
   const fullHeight = estimatePageHeight(platformBlocks);
   const totalEntries = groupedSections.reduce((sum, section) => sum + section.entries.length, 0);
   const shouldSplitIntoTwoPages =
-    platformBlocks.length > 10 ||
-    totalEntries > 24 ||
+    groupedSections.length > 8 ||
+    totalEntries > 18 ||
     fullHeight > maxColumnHeight;
 
-  if (platformBlocks.length <= 1 || !shouldSplitIntoTwoPages) {
+  if (groupedSections.length <= 1 || !shouldSplitIntoTwoPages) {
     pagedSections.push(groupedSections);
   } else {
-    let bestSplitIndex = 1;
-    let bestWorstHeight = Number.POSITIVE_INFINITY;
-    let bestHeightGap = Number.POSITIVE_INFINITY;
+    const targetEntriesPerPage = Math.ceil(totalEntries / 2);
+    let runningEntries = 0;
+    let splitIndex = 0;
 
-    for (let splitIndex = 1; splitIndex < platformBlocks.length; splitIndex += 1) {
-      const firstBlocks = platformBlocks.slice(0, splitIndex);
-      const secondBlocks = platformBlocks.slice(splitIndex);
-      const firstHeight = estimatePageHeight(firstBlocks);
-      const secondHeight = estimatePageHeight(secondBlocks);
-      const worstHeight = Math.max(firstHeight, secondHeight);
-      const heightGap = Math.abs(firstHeight - secondHeight);
+    for (let index = 0; index < groupedSections.length; index += 1) {
+      runningEntries += groupedSections[index].entries.length;
 
-      if (
-        worstHeight < bestWorstHeight ||
-        (worstHeight === bestWorstHeight && heightGap < bestHeightGap)
-      ) {
-        bestSplitIndex = splitIndex;
-        bestWorstHeight = worstHeight;
-        bestHeightGap = heightGap;
+      const reachedEntryTarget = runningEntries >= targetEntriesPerPage;
+      const reachedPlatformTarget = index + 1 >= Math.ceil(groupedSections.length / 2);
+      const canLeaveSecondPageNonEmpty = index + 1 < groupedSections.length;
+
+      if ((reachedEntryTarget || reachedPlatformTarget) && canLeaveSecondPageNonEmpty) {
+        splitIndex = index + 1;
+        break;
       }
     }
 
+    if (splitIndex <= 0 || splitIndex >= groupedSections.length) {
+      splitIndex = Math.ceil(groupedSections.length / 2);
+    }
+
     pagedSections.push(
-      groupedSections.slice(0, bestSplitIndex),
-      groupedSections.slice(bestSplitIndex),
+      groupedSections.slice(0, splitIndex),
+      groupedSections.slice(splitIndex),
     );
   }
 
