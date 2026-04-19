@@ -1691,7 +1691,7 @@ async function sendTelegramPhoto(
   chatId: number,
   imageBuffer: ArrayBuffer,
   caption: string,
-  replyMarkup: SheetNavigation,
+  replyMarkup?: SheetNavigation,
 ) {
   const token = getTelegramBotToken();
   const formData = new FormData();
@@ -1703,7 +1703,10 @@ async function sendTelegramPhoto(
     "sheet-preview.png",
   );
   formData.append("caption", caption);
-  formData.append("reply_markup", JSON.stringify(replyMarkup));
+
+  if (replyMarkup) {
+    formData.append("reply_markup", JSON.stringify(replyMarkup));
+  }
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
     method: "POST",
@@ -1966,6 +1969,48 @@ async function renderGenericSheetImage(
   return image.arrayBuffer();
 }
 
+function getDashboardAutoBadge(dashboard: DashboardKey) {
+  return dashboard === "deposit" ? "🏦 DEPOSIT" : "💸 WITHDRAW";
+}
+
+function buildAutoRealTimeSummaryCaption(preview: RealTimePreview) {
+  return `${getDashboardAutoBadge("withdraw")} · 📊 REAL TIME
+Function: Live Operations Summary
+Updated: ${preview.timestamp}
+Auto daily update`;
+}
+
+function buildAutoRealTimeSectionCaption(preview: MatrixSectionPreview, page: number, totalPages: number) {
+  return `${getDashboardAutoBadge("withdraw")} · 📊 REAL TIME
+Function: ${preview.title}
+Section ${page + 1} of ${totalPages}
+Auto daily update`;
+}
+
+function buildAutoShiftingCaption(preview: ShiftingBoardPreview) {
+  const shiftLabel =
+    preview.shiftKind === "night"
+      ? "🌙 Night Shift"
+      : preview.shiftKind === "mid"
+        ? "🌇 Mid Shift"
+        : "🌤️ Day Shift";
+
+  const pageLabel =
+    preview.totalPages > 1 ? `\nPage ${preview.page + 1} of ${preview.totalPages}` : "";
+
+  return `${getDashboardAutoBadge(preview.dashboard)} · 🔄 SHIFTING
+Function: ${shiftLabel}
+${preview.totalEntries} team members across ${preview.totalPlatforms} platforms${pageLabel}
+Auto daily update`;
+}
+
+function buildAutoDailyTransactionsCaption(summary: DailyTransactionSummary) {
+  return `${getDashboardAutoBadge("withdraw")} · 💹 DAILY TRANSACTIONS
+Function: Platform Transactions Overview
+${summary.totalPlatforms} platforms · ${summary.totalStaff} staff profiles
+Auto daily update`;
+}
+
 async function getDashboardSheetIndex(dashboard: DashboardKey, title: string) {
   const sheets = await getDashboardSheets(dashboard);
   return sheets.findIndex((sheet) => sheet.title === title);
@@ -1978,15 +2023,25 @@ async function sendAutoRealTimeBoard(chatId: number) {
     return false;
   }
 
-  const preview = await getRealTimeSummaryPreview();
-  const imageBuffer = await renderRealTimeImage(preview);
+  const summaryPreview = await getRealTimeSummaryPreview();
+  const summaryImage = await renderRealTimeImage(summaryPreview);
 
   await sendTelegramPhoto(
     chatId,
-    imageBuffer,
-    buildRealTimeSummaryCaption(preview),
-    buildSectionNavigation("withdraw", sheetIndex, 0, REAL_TIME_SECTION_COUNT),
+    summaryImage,
+    buildAutoRealTimeSummaryCaption(summaryPreview),
   );
+
+  for (let sectionIndex = 1; sectionIndex < REAL_TIME_SECTION_COUNT; sectionIndex += 1) {
+    const preview = await getRealTimeMatrixSection(sectionIndex);
+    const imageBuffer = await renderMatrixSectionImage(preview);
+
+    await sendTelegramPhoto(
+      chatId,
+      imageBuffer,
+      buildAutoRealTimeSectionCaption(preview, sectionIndex, REAL_TIME_SECTION_COUNT),
+    );
+  }
 
   return true;
 }
@@ -1998,17 +2053,13 @@ async function sendAutoDailyTransactionsBoard(chatId: number) {
     return false;
   }
 
-  const { summary, platforms } = await getDailyTransactionData();
+  const { summary } = await getDailyTransactionData();
   const imageBuffer = await renderDailyTransactionOverviewImage(summary);
 
   await sendTelegramPhoto(
     chatId,
     imageBuffer,
-    `💹 DAILY TRANSACTIONS COMMAND CENTER
-Platform shift overview
-Open a platform to review all staff transactions
-${platforms.length} platform${platforms.length === 1 ? "" : "s"} ready`,
-    buildDailyTransactionPlatformKeyboard(sheetIndex, platforms),
+    buildAutoDailyTransactionsCaption(summary),
   );
 
   return true;
@@ -2055,8 +2106,7 @@ async function sendAutoShiftingBoards(chatId: number, dashboard: DashboardKey) {
       await sendTelegramPhoto(
         chatId,
         imageBuffer,
-        buildShiftingBoardCaption(preview),
-        buildShiftingOverviewKeyboard(dashboard, sheetIndex, sections, shiftKind, preview.page, preview.totalPages),
+        buildAutoShiftingCaption(preview),
       );
       sentCount += 1;
     }
