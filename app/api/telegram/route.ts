@@ -1491,8 +1491,8 @@ async function showShiftingBoard(
       preview.totalPages,
     );
 
-    await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
     await sendTelegramPhoto(message.chat.id, imageBuffer, caption, replyMarkup);
+    await deleteTelegramMessage(message.chat.id, message.message_id).catch(() => undefined);
   } finally {
     if (loadingMessageId) {
       await deleteTelegramMessage(message.chat.id, loadingMessageId).catch(() => undefined);
