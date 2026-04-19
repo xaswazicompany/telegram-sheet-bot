@@ -2122,26 +2122,47 @@ async function runScheduledBroadcast() {
     throw new Error("No broadcast chats configured. Add TELEGRAM_BROADCAST_CHAT_IDS or allow a group chat.");
   }
 
-  const results: Array<{ chatId: number; sent: number }> = [];
+  const results: Array<{ chatId: number; sent: number; failedSteps: string[] }> = [];
 
   for (const chatId of chatIds) {
     let sent = 0;
+    const failedSteps: string[] = [];
 
-    if (await sendAutoRealTimeBoard(chatId)) {
-      sent += 1;
+    try {
+      if (await sendAutoRealTimeBoard(chatId)) {
+        sent += 1;
+      }
+    } catch (error) {
+      console.error("Scheduled broadcast failed: withdraw real-time board", { chatId, error });
+      failedSteps.push("withdraw-real-time");
     }
 
-    sent += await sendAutoShiftingBoards(chatId, "withdraw");
+    try {
+      sent += await sendAutoShiftingBoards(chatId, "withdraw");
+    } catch (error) {
+      console.error("Scheduled broadcast failed: withdraw shifting board", { chatId, error });
+      failedSteps.push("withdraw-shifting");
+    }
 
     if (getDepositSpreadsheetId()) {
-      sent += await sendAutoShiftingBoards(chatId, "deposit");
+      try {
+        sent += await sendAutoShiftingBoards(chatId, "deposit");
+      } catch (error) {
+        console.error("Scheduled broadcast failed: deposit shifting board", { chatId, error });
+        failedSteps.push("deposit-shifting");
+      }
     }
 
-    if (await sendAutoDailyTransactionsBoard(chatId)) {
-      sent += 1;
+    try {
+      if (await sendAutoDailyTransactionsBoard(chatId)) {
+        sent += 1;
+      }
+    } catch (error) {
+      console.error("Scheduled broadcast failed: withdraw daily transactions board", { chatId, error });
+      failedSteps.push("withdraw-daily-transactions");
     }
 
-    results.push({ chatId, sent });
+    results.push({ chatId, sent, failedSteps });
   }
 
   return {
