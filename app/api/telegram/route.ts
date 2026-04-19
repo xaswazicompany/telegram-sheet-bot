@@ -253,6 +253,44 @@ function getAllowedChatIds() {
     .filter(Boolean);
 }
 
+function getBroadcastChatIds() {
+  const raw = process.env.TELEGRAM_BROADCAST_CHAT_IDS?.trim();
+
+  if (raw) {
+    return raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+  }
+
+  return getAllowedChatIds()
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value < 0);
+}
+
+function getCronSecret() {
+  return process.env.CRON_SECRET?.trim() || "";
+}
+
+function isAuthorizedCronRequest(request: Request) {
+  const cronSecret = getCronSecret();
+
+  if (!cronSecret) {
+    return false;
+  }
+
+  const authorizationHeader = request.headers.get("authorization")?.trim() || "";
+  const bearerToken = authorizationHeader.startsWith("Bearer ")
+    ? authorizationHeader.slice("Bearer ".length).trim()
+    : "";
+  const url = new URL(request.url);
+  const querySecret = url.searchParams.get("secret")?.trim() || "";
+
+  return bearerToken === cronSecret || querySecret === cronSecret;
+}
+
 function getPreviewRows() {
   return Math.max(1, Number(process.env.TELEGRAM_SHEET_PREVIEW_ROWS ?? "10"));
 }
@@ -1926,6 +1964,140 @@ async function renderGenericSheetImage(
   );
 
   return image.arrayBuffer();
+}
+
+async function getDashboardSheetIndex(dashboard: DashboardKey, title: string) {
+  const sheets = await getDashboardSheets(dashboard);
+  return sheets.findIndex((sheet) => sheet.title === title);
+}
+
+async function sendAutoRealTimeBoard(chatId: number) {
+  const sheetIndex = await getDashboardSheetIndex("withdraw", "REAL TIME");
+
+  if (sheetIndex < 0) {
+    return false;
+  }
+
+  const preview = await getRealTimeSummaryPreview();
+  const imageBuffer = await renderRealTimeImage(preview);
+
+  await sendTelegramPhoto(
+    chatId,
+    imageBuffer,
+    buildRealTimeSummaryCaption(preview),
+    buildSectionNavigation("withdraw", sheetIndex, 0, REAL_TIME_SECTION_COUNT),
+  );
+
+  return true;
+}
+
+async function sendAutoDailyTransactionsBoard(chatId: number) {
+  const sheetIndex = await getDashboardSheetIndex("withdraw", "APRIL DAILY TRANSACTIONS");
+
+  if (sheetIndex < 0) {
+    return false;
+  }
+
+  const { summary, platforms } = await getDailyTransactionData();
+  const imageBuffer = await renderDailyTransactionOverviewImage(summary);
+
+  await sendTelegramPhoto(
+    chatId,
+    imageBuffer,
+    `💹 DAILY TRANSACTIONS COMMAND CENTER
+Platform shift overview
+Open a platform to review all staff transactions
+${platforms.length} platform${platforms.length === 1 ? "" : "s"} ready`,
+    buildDailyTransactionPlatformKeyboard(sheetIndex, platforms),
+  );
+
+  return true;
+}
+
+async function sendAutoShiftingBoards(chatId: number, dashboard: DashboardKey) {
+  const sheetIndex = await getDashboardSheetIndex(dashboard, "SHIFTING");
+
+  if (sheetIndex < 0) {
+    return 0;
+  }
+
+  const { sections } = await getShiftingData(dashboard);
+  let sentCount = 0;
+
+  for (const shiftKind of ["day", "mid", "night"] as const) {
+    const totalForShift = sections.reduce(
+      (sum, section) =>
+        sum +
+        (shiftKind === "day"
+          ? section.dayEntries.length
+          : shiftKind === "mid"
+            ? section.midEntries.length
+            : section.nightEntries.length),
+      0,
+    );
+
+    if (totalForShift === 0) {
+      continue;
+    }
+
+    const firstPreview = await getShiftingBoardPreview(dashboard, shiftKind, 0);
+
+    for (let page = 0; page < firstPreview.totalPages; page += 1) {
+      const preview = page === 0 ? firstPreview : await getShiftingBoardPreview(dashboard, shiftKind, page);
+      let imageBuffer: ArrayBuffer;
+
+      try {
+        imageBuffer = await renderShiftingBoardImage(preview);
+      } catch {
+        imageBuffer = await renderShiftingBoardFallbackImage(preview);
+      }
+
+      await sendTelegramPhoto(
+        chatId,
+        imageBuffer,
+        buildShiftingBoardCaption(preview),
+        buildShiftingOverviewKeyboard(dashboard, sheetIndex, sections, shiftKind, preview.page, preview.totalPages),
+      );
+      sentCount += 1;
+    }
+  }
+
+  return sentCount;
+}
+
+async function runScheduledBroadcast() {
+  const chatIds = getBroadcastChatIds();
+
+  if (chatIds.length === 0) {
+    throw new Error("No broadcast chats configured. Add TELEGRAM_BROADCAST_CHAT_IDS or allow a group chat.");
+  }
+
+  const results: Array<{ chatId: number; sent: number }> = [];
+
+  for (const chatId of chatIds) {
+    let sent = 0;
+
+    if (await sendAutoRealTimeBoard(chatId)) {
+      sent += 1;
+    }
+
+    sent += await sendAutoShiftingBoards(chatId, "withdraw");
+
+    if (getDepositSpreadsheetId()) {
+      sent += await sendAutoShiftingBoards(chatId, "deposit");
+    }
+
+    if (await sendAutoDailyTransactionsBoard(chatId)) {
+      sent += 1;
+    }
+
+    results.push({ chatId, sent });
+  }
+
+  return {
+    chatCount: results.length,
+    results,
+  };
 }
 
 async function renderBasicsWithdrawImage(preview: BasicsPreview) {
@@ -4851,11 +5023,36 @@ Choose a board below to continue.`,
   await answerCallbackQuery(callbackQuery.id, "Unknown action.");
 }
 
-export async function GET() {
-  return NextResponse.json({
-    ok: true,
-    message: "Telegram webhook route is ready.",
-  });
+export async function GET(request: Request) {
+  try {
+    if (!isAuthorizedCronRequest(request)) {
+      return NextResponse.json({
+        ok: true,
+        message: "Telegram webhook route is ready.",
+      });
+    }
+
+    const broadcastResult = await runScheduledBroadcast();
+
+    return NextResponse.json({
+      ok: true,
+      message: "Scheduled Telegram broadcast sent.",
+      ...broadcastResult,
+    });
+  } catch (error) {
+    console.error("Scheduled Telegram broadcast failed", error);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Scheduled Telegram broadcast failed.",
+      },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request) {
