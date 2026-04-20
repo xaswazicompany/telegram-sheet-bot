@@ -3,6 +3,9 @@ import { createElement } from "react";
 import { NextResponse } from "next/server";
 import { listSheetTabs, readSheetRange, readSheetWindow } from "@/lib/googleSheets";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 type TelegramChat = {
   id: number;
 };
