@@ -417,6 +417,28 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTelegramRetryMs(body: unknown) {
+  if (
+    typeof body === "object" &&
+    body !== null &&
+    "parameters" in body &&
+    typeof (body as { parameters?: unknown }).parameters === "object" &&
+    (body as { parameters?: { retry_after?: unknown } }).parameters !== null
+  ) {
+    const retryAfter = (body as { parameters?: { retry_after?: unknown } }).parameters?.retry_after;
+
+    if (typeof retryAfter === "number" && Number.isFinite(retryAfter)) {
+      return Math.max(1, retryAfter + 1) * 1000;
+    }
+  }
+
+  return null;
+}
+
 function buildDisplayRows(rows: string[][], rowOffset: number) {
   const visibleRows = rows
     .map((row, index) => ({
@@ -1662,7 +1684,7 @@ async function showDailyTransactionView(
   }
 }
 
-async function callTelegram(method: string, payload: Record<string, unknown>) {
+async function callTelegram(method: string, payload: Record<string, unknown>, attempt = 0): Promise<unknown> {
   const token = getTelegramBotToken();
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
@@ -1673,6 +1695,15 @@ async function callTelegram(method: string, payload: Record<string, unknown>) {
   });
 
   const body = (await response.json()) as { ok?: boolean; result?: unknown; description?: string };
+
+  if ((response.status === 429 || body.ok === false) && attempt < 3) {
+    const retryMs = getTelegramRetryMs(body);
+
+    if (retryMs) {
+      await sleep(retryMs);
+      return callTelegram(method, payload, attempt + 1);
+    }
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -1692,6 +1723,7 @@ async function sendTelegramPhoto(
   imageBuffer: ArrayBuffer,
   caption: string,
   replyMarkup?: SheetNavigation,
+  attempt = 0,
 ) {
   const token = getTelegramBotToken();
   const formData = new FormData();
@@ -1713,9 +1745,27 @@ async function sendTelegramPhoto(
     body: formData,
   });
 
+  const body = (await response.json()) as {
+    ok?: boolean;
+    description?: string;
+    parameters?: { retry_after?: number };
+  };
+
+  if ((response.status === 429 || body.ok === false) && attempt < 3) {
+    const retryMs = getTelegramRetryMs(body);
+
+    if (retryMs) {
+      await sleep(retryMs);
+      return sendTelegramPhoto(chatId, imageBuffer, caption, replyMarkup, attempt + 1);
+    }
+  }
+
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram API sendPhoto failed: ${response.status} ${body}`);
+    throw new Error(`Telegram API sendPhoto failed: ${response.status} ${body.description ?? "Unknown error"}`);
+  }
+
+  if (body.ok === false) {
+    throw new Error(`Telegram API sendPhoto failed: ${body.description ?? "Unknown error"}`);
   }
 }
 
